@@ -14,352 +14,274 @@ Requires Go 1.21 or later.
 
 ## Quick Start
 
-### Open and read a .vsdx file
-
 ```go
 package main
 
 import (
     "fmt"
+    "log"
+
     "github.com/MichelW6667/vsdx-go/vsdx"
 )
 
 func main() {
     vis, err := vsdx.Open("my_file.vsdx")
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
     defer vis.Close()
 
-    // List pages
-    for _, name := range vis.GetPageNames() {
-        fmt.Println("Page:", name)
-    }
-
-    // Get shapes on first page
     page := vis.GetPage(0)
-    for _, shape := range page.ChildShapes() {
-        fmt.Printf("Shape ID=%s Text=%q Pos=(%.2f, %.2f)\n",
-            shape.ID, shape.Text(), shape.X(), shape.Y())
+    for _, shape := range page.AllShapes() {
+        fmt.Printf("Shape ID=%s Text=%q\n", shape.ID, shape.Text())
+    }
+
+    shape := page.FindShapeByText("Hello")
+    if shape != nil {
+        shape.SetText("Updated")
+        shape.SetX(3.0)
+        shape.SetFillColor("#ff0000")
+    }
+
+    if err := vis.SaveVsdx("output.vsdx"); err != nil {
+        log.Fatal(err)
     }
 }
 ```
 
-### Find and modify shapes
+## Codebase Overview
 
-```go
-// Find shape by text
-shape := page.FindShapeByText("Hello")
-
-// Modify shape properties
-shape.SetX(3.0)
-shape.SetY(5.0)
-shape.SetWidth(2.0)
-shape.SetHeight(1.5)
-shape.SetText("Updated Text")
-shape.SetFillColor("#ff0000")
-
-// Save to new file
-vis.SaveVsdx("modified.vsdx")
+```
+vsdx-go/
+├── go.mod
+├── vsdx/                       # All library code in one package
+│   ├── doc.go                  # Package-level documentation (40 lines)
+│   │
+│   │── # Core types
+│   ├── vsdxfile.go             # VisioFile: Open/Close/Save, page management (1153 lines)
+│   ├── page.go                 # Page: shapes, search, connects, dimensions (408 lines)
+│   ├── shape.go                # Shape: position, text, style, cells, hierarchy (857 lines)
+│   ├── cell.go                 # Cell: name/value/formula triple (43 lines)
+│   ├── connect.go              # Connect: from/to shape relationships (52 lines)
+│   ├── data_property.go        # DataProperty: custom shape properties with master inheritance (123 lines)
+│   │
+│   │── # Geometry
+│   ├── geometry.go             # Geometry, GeometryRow, GeometryCell: shape paths (342 lines)
+│   │
+│   │── # Features
+│   ├── template.go             # RenderTemplate: Jinja2-style directives (490 lines)
+│   ├── diff.go                 # VisioFileDiff: compare two .vsdx files (241 lines)
+│   ├── media.go                # Media: embedded template shapes for connectors (67 lines)
+│   ├── formula.go              # CalcValue: formula evaluation (35 lines)
+│   │
+│   │── # Support
+│   ├── cellname.go             # CellName constants: PinX, Width, FillForegnd, etc. (56 lines)
+│   ├── errors.go               # Sentinel errors: ErrInvalidFileType, FileError (27 lines)
+│   ├── types.go                # Result structs: Point, Rect (11 lines)
+│   ├── namespace.go            # XML namespace constants (14 lines)
+│   ├── util.go                 # writeFile helper (15 lines)
+│   │
+│   └── vsdx_test.go            # 95 test cases (2780 lines)
+│
+└── tests/                      # Test fixture .vsdx files
+    ├── test1.vsdx              # 3 pages, 4 shapes (basic)
+    ├── test2.vsdx              # Group shapes
+    ├── test3_house.vsdx        # Master shapes
+    ├── test4_connectors.vsdx   # Connects/connectors
+    └── ...                     # 15+ fixture files
 ```
 
-### Remove a shape
+### Key data flow
 
-```go
-vis, _ := vsdx.Open("my_file.vsdx")
-defer vis.Close()
+**Opening a file:**
 
-shape := vis.GetPage(0).FindShapeByText("Shape to remove")
-if shape != nil {
-    shape.Remove()
-    vis.SaveVsdx("shape_removed.vsdx")
-}
+```
+.vsdx (ZIP) → map[string][]byte (in-memory) → etree XML parse
+  → VisioFile.Pages []*Page  (from visio/pages/pages.xml + page1.xml, page2.xml, ...)
+  → Page.shapes() []*Shape   (from <Shapes> elements in page XML)
+  → Shape.Cells, Shape.Geometry, Shape.DataProperties (from child XML elements)
+  → VisioFile.MasterPages []*Page (from visio/masters/)
 ```
 
-### Search with regex
+**Saving a file:**
 
-```go
-shapes, err := page.FindShapesByRegex(`\d{3}-\d{4}`)
-if err != nil {
-    panic(err)
-}
-for _, s := range shapes {
-    fmt.Println(s.Text())
-}
+```
+Modified etree XML → serialize to []byte
+  → update map[string][]byte entries
+  → write new ZIP archive to disk
 ```
 
-### Find and replace text
+### Shape property resolution
 
-```go
-page.FindReplace("old text", "new text")
-vis.SaveVsdx("updated.vsdx")
+Shapes can inherit from master shapes. Property lookup follows this chain:
+
+```
+shape.CellValue("PinX")
+  → check shape's own <Cell N="PinX"> element
+  → if not found, check MasterShape().CellValue("PinX")
+  → if not found, return ""
 ```
 
-### Apply text templates
+This pattern applies to cells, text, data properties, and geometry.
+
+## API Reference
+
+### Opening and saving
 
 ```go
-// Replace {{key}} placeholders in shape text
-page.ApplyTextContext(map[string]string{
-    "date":     "2024-01-15",
-    "scenario": "Production",
-})
-vis.SaveVsdx("rendered.vsdx")
+vis, err := vsdx.Open("file.vsdx")       // open from file (also .vsdm)
+vis, err := vsdx.OpenBytes(data)          // open from []byte
+err := vis.Close()                        // close and free resources (implements io.Closer)
+err := vis.SaveVsdx("output.vsdx")        // save to file
 ```
 
-### Render templates
+### Pages
 
 ```go
-// Use Jinja2-style directives in shape text
-vis, _ := vsdx.Open("template.vsdx")
-defer vis.Close()
+page := vis.GetPage(0)                    // by index
+page := vis.GetPageByName("Page-1")       // by name
+names := vis.GetPageNames()               // list all page names
 
-vis.RenderTemplate(map[string]interface{}{
-    "name":      "Production",
-    "count":     42,
-    "show_info": true,
-    "items":     []interface{}{"Server A", "Server B", "Server C"},
-})
-vis.SaveVsdx("rendered.vsdx")
-```
-
-Supported directives in shape text:
-- `{{key}}` - Replace with context value (supports arithmetic: `{{x*y}}`)
-- `{% for item in list %}` - Duplicate shape for each item in list
-- `{% showif condition %}` - Conditionally show/hide shape (supports `not`, `>`, `<`, `==`, etc.)
-- `{% set self.x = expr %}` - Set shape property (x, y, width, height) from expression
-
-Page names can also contain `{% showif condition %}` to conditionally include/exclude pages.
-
-### Work with connectors
-
-```go
-page := vis.GetPage(0)
-
-// Get all connections on a page
-for _, c := range page.Connects() {
-    fmt.Printf("Connector %s -> Shape %s\n", c.ConnectorShapeID(), c.ShapeID())
-}
-
-// Find connectors between two shapes
-connectors, _ := page.GetConnectorsBetween("1", "", "2", "")
-
-// Get shapes connected to a specific shape
-shape := page.FindShapeByID("1")
-for _, connected := range shape.ConnectedShapes() {
-    fmt.Println("Connected to:", connected.Text())
-}
-
-// Create a new connector between two shapes
-shapeA := page.FindShapeByText("Server")
-shapeB := page.FindShapeByText("Database")
-connector, err := vis.ConnectShapes(page, shapeA, shapeB)
-if err != nil {
-    panic(err)
-}
-fmt.Println("Created connector:", connector.ID)
-vis.SaveVsdx("connected.vsdx")
-```
-
-### Work with data properties
-
-```go
-shape := page.FindShapeByText("Server")
-props := shape.DataProperties()
-
-for label, prop := range props {
-    fmt.Printf("%s = %s\n", label, prop.Value())
-}
-
-// Find shapes by property
-shapes := page.FindShapesByPropertyLabelValue("Status", "Active")
-```
-
-### Add, copy, and remove pages
-
-```go
-vis, _ := vsdx.Open("my_file.vsdx")
-defer vis.Close()
-
-// Add a new empty page
-newPage := vis.AddPage("Reports")
-
-// Copy an existing page
-original := vis.GetPage(0)
-copy := vis.CopyPage(original, int(vsdx.PageAfter), "Page-1 Copy")
-
-// Remove a page
+// Page management (return *Page, error)
+page, err := vis.AddPage("New Page")
+page, err := vis.AddPageAt(0, "First")
+page, err := vis.CopyPage(src, int(vsdx.PageAfter), "Copy")
+vis.RemovePageByIndex(2)
 vis.RemovePageByName("Old Page")
 
-// Copy a shape from one page to another
-shape := original.FindShapeByText("Template")
-vis.CopyShape(shape.XML(), newPage)
-
-vis.SaveVsdx("updated.vsdx")
-```
-
-### Compare two .vsdx files
-
-```go
-diff, err := vsdx.NewVisioFileDiff("file_v1.vsdx", "file_v2.vsdx")
-if err != nil {
-    panic(err)
-}
-
-fmt.Println("Same members:", diff.CompareMembers())
-fmt.Println("Added:", diff.AddedMembers())
-fmt.Println("Removed:", diff.RemovedMembers())
-
-for member, lines := range diff.Diffs {
-    fmt.Printf("\n%s:\n", member)
-    for _, line := range lines {
-        fmt.Println(line)  // "  " same, "- " removed, "+ " added
-    }
-}
-```
-
-### Master shapes
-
-```go
-// Access master pages
-for _, master := range vis.MasterPages {
-    fmt.Printf("Master: %s (ID=%s)\n", master.Name(), master.PageID())
-}
-
-// Get a shape's master
-shape := page.FindShapeByID("1")
-if masterPage := shape.MasterPage(); masterPage != nil {
-    fmt.Println("Master:", masterPage.Name())
-}
-```
-
-## API Overview
-
-### Core Types
-
-| Type | Description |
-|------|-------------|
-| `VisioFile` | Main entry point: open/save .vsdx files, manage pages |
-| `Page` | Page or master page: shapes, connections, dimensions |
-| `Shape` | Shape or group: text, position, size, style, cells |
-| `Cell` | Name/value/formula pair from XML Cell element |
-| `DataProperty` | Custom data property of a shape |
-| `Connect` | Connection between two shapes |
-| `Geometry` | Shape path definition (MoveTo, LineTo, etc.) |
-| `Media` | Template shapes (connector, rectangle, circle, line) |
-| `VisioFileDiff` | Compare two .vsdx files (added/removed/changed members) |
-
-### VisioFile
-
-```go
-// Open/close
-vis, err := vsdx.Open("file.vsdx")     // also supports .vsdm
-vis.Close()
-
-// Pages
-vis.GetPage(0)                          // by index
-vis.GetPageByName("Page-1")             // by name
-vis.GetPageNames()                      // list names
-
 // Master pages
-vis.MasterPages                         // []*Page
-vis.GetMasterPageByID("2")              // by ID
-
-// Page management
-vis.AddPage("New Page")                 // add at end
-vis.AddPageAt(0, "First Page")          // add at index
-vis.CopyPage(page, int(vsdx.PageAfter), "Copy") // copy page
-vis.RemovePageByIndex(2)                // remove by index
-vis.RemovePageByName("Page-3")          // remove by name
-
-// Shape copy
-vis.CopyShape(shape.XML(), destPage)    // copy shape with new IDs
-
-// Connect shapes
-conn, _ := vis.ConnectShapes(page, shapeA, shapeB)
-
-// Save
-vis.SaveVsdx("output.vsdx")
+vis.MasterPages                           // []*Page
+vis.GetMasterPageByID("2")
 ```
 
-### Page
+### Shapes - finding
 
 ```go
-// Properties
-page.Name()                             // get name
-page.SetName("New Name")                // set name
-page.Width() / page.SetWidth(10.0)      // page dimensions
-page.Height() / page.SetHeight(12.0)
-
-// Shapes
-page.ChildShapes()                      // top-level shapes
-page.AllShapes()                        // all shapes recursively
-
-// Search
+page.ChildShapes()                        // top-level shapes
+page.AllShapes()                          // all shapes recursively
 page.FindShapeByID("5")
 page.FindShapeByText("hello")
-page.FindShapesByText("hello")          // all matches
-page.FindShapesByRegex(`\d+`)           // regex search
+page.FindShapesByText("hello")            // all matches
+page.FindShapesByRegex(`\d+`)             // regex search
 page.FindShapeByPropertyLabel("Status")
 page.FindShapesByPropertyLabelValue("Status", "Active")
 page.FindShapesWithSameMaster(shape)
 page.GetConnectorsBetween("1", "", "2", "")
-
-// Edit
-page.FindReplace("old", "new")
-page.ApplyTextContext(map[string]string{"key": "value"})
-page.Connects()                         // all connections
-page.AddConnect(connect)                // add connection
 ```
 
-### Shape
+### Shapes - reading
 
 ```go
-// Position and size (getters and setters)
-shape.X() / shape.SetX(3.0)            // PinX/PinY
-shape.Y() / shape.SetY(5.0)
-shape.Width() / shape.SetWidth(2.0)
-shape.Height() / shape.SetHeight(1.5)
-shape.Angle() / shape.SetAngle(0.5)
-shape.BeginX() / shape.SetBeginX(1.0)  // connector endpoints
-shape.EndX() / shape.SetEndX(5.0)
+shape.ID                                  // shape ID string
+shape.Text()                              // text (with master fallback)
+shape.X() / shape.Y()                     // position (PinX/PinY)
+shape.Width() / shape.Height()            // size
+shape.BeginX() / shape.EndX()             // connector endpoints
+shape.Angle()                             // rotation
+shape.LineColor() / shape.FillColor()     // style
+shape.CellValue("PinX")                   // any cell value (with master fallback)
+shape.CellFormula("LocPinX")              // cell formula
 
-// Text
-shape.Text()                            // get text (with master fallback)
-shape.SetText("new text")
-
-// Style
-shape.LineColor() / shape.SetLineColor("#ff0000")
-shape.FillColor() / shape.SetFillColor("#00ff00")
-shape.TextColor() / shape.SetTextColor("#0000ff")
-shape.LineWeight() / shape.SetLineWeight(0.5)
-shape.EndArrow() / shape.SetEndArrow(13)
-
-// Cells
-shape.CellValue("PinX")                // get cell value (with master fallback)
-shape.SetCellValue("PinX", "5.0")      // set or create cell
-shape.CellFormula("LocPinX")
-shape.SetCellFormula("LocPinX", "Width*0.5")
+// Structured results
+shape.Center()                            // Point{X, Y}
+shape.BoundsRect()                        // Rect{BeginX, BeginY, EndX, EndY}
+shape.CenterXY()                          // (float64, float64)
+shape.Bounds()                            // (beginX, beginY, endX, endY)
 
 // Hierarchy
-shape.ChildShapes()                     // direct children
-shape.AllShapes()                       // recursive
-shape.MasterShape()                     // master shape
-shape.MasterPage()                      // master page
-
-// Manipulation
-shape.Move(1.0, 2.0)                   // move by delta
-shape.Remove()                          // remove from page
-shape.FindReplace("old", "new")
-shape.ApplyTextFilter(map[string]string{"key": "value"})
-
-// Bounds
-shape.Bounds()                          // (beginX, beginY, endX, endY)
-shape.CenterXY()                        // center position
-shape.RelativeBounds()                  // relative to parent group
-
-// Data properties
-shape.DataProperties()                  // map[string]*DataProperty
+shape.ChildShapes()                       // direct children
+shape.AllShapes()                         // recursive
+shape.MasterShape()                       // master shape
+shape.MasterPage()                        // master page
+shape.ParentShape()                       // parent shape (nil if parent is a page)
+shape.ConnectedShapes()                   // shapes connected via connectors
+shape.DataProperties()                    // map[string]*DataProperty
 ```
+
+### Shapes - editing
+
+```go
+shape.SetX(3.0) / shape.SetY(5.0)
+shape.SetWidth(2.0) / shape.SetHeight(1.5)
+shape.SetText("new text")
+shape.SetFillColor("#00ff00")
+shape.SetLineColor("#ff0000")
+shape.SetTextColor("#0000ff")
+shape.SetLineWeight(0.5)
+shape.SetEndArrow(13)
+shape.SetAngle(0.5)
+shape.SetCellValue("PinX", "5.0")         // set or create cell
+shape.SetCellFormula("LocPinX", "Width*0.5")
+shape.Move(1.0, 2.0)                      // move by delta
+shape.Remove()                            // remove from parent
+shape.FindReplace("old", "new")
+
+// Connect shapes
+conn, err := vis.ConnectShapes(page, shapeA, shapeB)
+vis.CopyShape(shape.XML(), destPage)
+```
+
+### Templating
+
+Jinja2-style directives in shape text:
+
+```go
+vis.RenderTemplate(map[string]any{
+    "name":      "Production",
+    "count":     42,
+    "show_info": true,
+    "items":     []any{"Server A", "Server B"},
+})
+```
+
+| Directive | Description |
+|-----------|-------------|
+| `{{key}}` | Replace with context value (supports arithmetic: `{{x*y}}`) |
+| `{% for item in list %}` | Duplicate shape for each item |
+| `{% showif condition %}` | Show/hide shape or page (`not`, `>`, `<`, `==`) |
+| `{% set self.x = expr %}` | Set shape property from expression |
+
+### Comparing files
+
+```go
+diff, err := vsdx.NewVisioFileDiff("v1.vsdx", "v2.vsdx")
+diff.CompareMembers()                     // common ZIP members
+diff.AddedMembers()                       // only in v2
+diff.RemovedMembers()                     // only in v1
+diff.Diffs                                // map[string][]string with line-level diffs
+```
+
+### Error handling
+
+```go
+vis, err := vsdx.Open("bad.txt")
+// err is *vsdx.FileError wrapping vsdx.ErrInvalidFileType
+
+var fe *vsdx.FileError
+if errors.As(err, &fe) {
+    fmt.Println("path:", fe.Path)
+}
+if errors.Is(err, vsdx.ErrInvalidFileType) {
+    fmt.Println("wrong file type")
+}
+```
+
+Sentinel errors: `ErrInvalidFileType`, `ErrInvalidFormat`, `ErrShapeNotFound`
+
+### Constants
+
+Cell name constants avoid magic strings:
+
+```go
+shape.CellValue(vsdx.CellPinX)           // instead of "PinX"
+shape.SetCellValue(vsdx.CellWidth, "2.0") // instead of "Width"
+```
+
+Available: `CellPinX`, `CellPinY`, `CellWidth`, `CellHeight`, `CellAngle`,
+`CellBeginX`, `CellBeginY`, `CellEndX`, `CellEndY`, `CellLineWeight`,
+`CellLineColor`, `CellFillForegnd`, `CellFillBkgnd`, `CellCharColor`,
+`CellEndArrow`, `CellBegTrigger`, `CellEndTrigger`, `CellPageWidth`,
+`CellPageHeight`, `CellLocPinX`, `CellLocPinY`
 
 ## VSDX File Format
 
@@ -375,21 +297,21 @@ visio/masters/masters.xml     Master shape definitions
 visio/masters/master1.xml     Individual master shapes
 ```
 
-## Implementation Status
+XML namespace: `http://schemas.microsoft.com/office/visio/2012/main`
 
-| Phase | Status | Description |
-|-------|--------|-------------|
-| 1. Reading | Done | Open ZIP, parse XML, populate structs |
-| 2. Navigation | Done | Search shapes by ID, text, property, regex, master |
-| 3. Editing | Done | Modify properties, text, style, move, remove shapes |
-| 4. Writing | Done | Save modified XML back to .vsdx, add/remove/copy pages, copy shapes |
-| 5. Connectors | Done | Create new connections between shapes |
-| 6. Templating | Done | Jinja2-style template directives in shape text |
-| 7. Diff | Done | Compare two .vsdx files |
+XML parsing uses [github.com/beevik/etree](https://github.com/beevik/etree) for XPath-like navigation, matching the Python library's ElementTree approach.
+
+## Running Tests
+
+```bash
+go test ./vsdx/... -v
+```
+
+95 test cases covering all features. Test fixtures are `.vsdx` files in `tests/`.
 
 ## Credits
 
-This is a Go port of the Python [vsdx](https://github.com/dave-howard/vsdx) library by Dave Howard.
+Go port of the Python [vsdx](https://github.com/dave-howard/vsdx) library by Dave Howard.
 
 ## License
 

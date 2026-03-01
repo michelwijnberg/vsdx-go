@@ -16,21 +16,22 @@ go mod download
 go test ./vsdx/... -v
 ```
 
-Test fixtures are in the `tests/` directory. When adding new features, please include test cases using existing `.vsdx` test files where possible.
+Test fixtures are `.vsdx` files in the `tests/` directory. When adding new features, include test cases using existing fixtures where possible.
 
 ## Project Structure
 
-- `vsdx/` - Main Go package with all library code
+- `vsdx/` - Main Go package with all library code (18 files)
 - `tests/` - Test fixture `.vsdx` files
-- `python-vsdx/` - Original Python source (for reference during porting)
+- `docs/` - Reference documentation (MS-VSDX format spec)
+
+See `README.md` for a detailed file-by-file breakdown.
 
 ## Guidelines
 
 - Follow Go conventions and idioms
-- Use `github.com/beevik/etree` for XML parsing (matching the Python ElementTree approach)
+- Use `github.com/beevik/etree` for XML parsing
+- Use cell name constants from `cellname.go` (e.g., `CellPinX` instead of `"PinX"`)
+- Use sentinel errors from `errors.go` where appropriate
+- Return `error` values instead of silently ignoring failures
 - Add tests for new features
 - Run `go vet ./...` and `go test ./...` before submitting
-
-## Porting from Python
-
-When porting a Python method, refer to the original implementation in `python-vsdx/vsdx/` and the corresponding Python tests in `tests/`. The Go API uses getter/setter methods instead of Python properties (e.g., `shape.X()` / `shape.SetX(v)` instead of `shape.x`).

@@ -29,6 +29,14 @@
 //	shape.SetX(5.0)
 //	shape.SetFillColor("#00ff00")
 //
+// # Connectors
+//
+//	conn, err := vis.ConnectShapes(page, shapeA, shapeB)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	fmt.Println("Created connector:", conn.ID)
+//
 // # Templating
 //
 //	context := map[string]any{
@@ -37,4 +45,17 @@
 //	    "show_dmz": true,
 //	}
 //	vis.RenderTemplate(context)
+//
+// # Error handling
+//
+// Open returns typed errors that can be inspected with errors.Is and errors.As:
+//
+//	vis, err := vsdx.Open("bad.txt")
+//	if errors.Is(err, vsdx.ErrInvalidFileType) {
+//	    // wrong file extension
+//	}
+//	var fe *vsdx.FileError
+//	if errors.As(err, &fe) {
+//	    fmt.Println("path:", fe.Path)
+//	}
 package vsdx
