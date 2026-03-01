@@ -101,27 +101,29 @@ template engine. Dit is een secundaire feature; eerst de kern-functionaliteit po
 | `vsdx/media.py`      | ~50    | Media template shapes                    |
 | `vsdx/vsdxdiff.py`   | ~80    | Bestandsvergelijking                      |
 
-## Voorgestelde Go Package Structuur
+## Go Package Structuur
 
 ```
 vsdx-go/
 ├── go.mod
 ├── go.sum
+├── README.md            # Library documentatie met voorbeelden
+├── CLAUDE.md            # AI-assistentie context
 ├── vsdx/
-│   ├── vsdxfile.go      # VisioFile struct + open/save
-│   ├── page.go          # Page struct
-│   ├── shape.go         # Shape, Cell, DataProperty structs
-│   ├── connect.go       # Connect struct
-│   ├── geometry.go      # Geometry structs
-│   ├── formula.go       # Formule-evaluatie
-│   ├── media.go         # Template shapes
-│   ├── diff.go          # Bestandsvergelijking
-│   ├── namespace.go     # XML namespace constanten
-│   └── media/
-│       └── media.vsdx   # Embedded template bestand (via embed)
+│   ├── vsdxfile.go      # VisioFile struct + Open/Close/SaveVsdx (369 lines)
+│   ├── page.go          # Page struct + search/edit methods (400 lines)
+│   ├── shape.go         # Shape struct + position/text/style/search (765 lines)
+│   ├── cell.go          # Cell struct (name/value/formula) (43 lines)
+│   ├── data_property.go # DataProperty struct (master inheritance) (123 lines)
+│   ├── connect.go       # Connect struct (from/to relationships) (52 lines)
+│   ├── geometry.go      # Geometry/GeometryRow/GeometryCell (335 lines)
+│   ├── formula.go       # CalcValue formula evaluation (35 lines)
+│   ├── namespace.go     # XML namespace constants (14 lines)
+│   ├── util.go          # File writing helper (15 lines)
+│   └── vsdx_test.go     # 55 test cases (1827 lines)
 ├── tests/
-│   └── *.vsdx           # Test fixtures
-└── CLAUDE.md
+│   └── *.vsdx           # Test fixtures (15+ files)
+└── vsdx/*.py            # Original Python source files (reference, co-located)
 ```
 
 ## Go-specifieke Overwegingen
@@ -152,10 +154,10 @@ const (
 
 ## Prioriteit van Omzetting
 
-1. **Fase 1 - Lezen:** ZIP openen, XML parsen, Page/Shape/Cell structs vullen
-2. **Fase 2 - Navigatie:** Shapes zoeken (by ID, text, property), hiërarchie doorlopen
-3. **Fase 3 - Bewerken:** Shape properties wijzigen, pagina's toevoegen/verwijderen
-4. **Fase 4 - Schrijven:** Gewijzigde XML terug opslaan als .vsdx
+1. **Fase 1 - Lezen:** ZIP openen, XML parsen, Page/Shape/Cell structs vullen - **DONE**
+2. **Fase 2 - Navigatie:** Shapes zoeken (by ID, text, property, regex, master), hiërarchie doorlopen - **DONE**
+3. **Fase 3 - Bewerken:** Shape properties wijzigen, tekst, stijl, positie, move, remove - **DONE**
+4. **Fase 4 - Schrijven:** Gewijzigde XML terug opslaan als .vsdx (SaveVsdx) - **DONE** (basis)
 5. **Fase 5 - Connectors:** Connect aanmaken, shapes verbinden
 6. **Fase 6 - Templating:** Template engine (optioneel, Go text/template)
 7. **Fase 7 - Diff:** Bestandsvergelijking
@@ -163,9 +165,16 @@ const (
 ## Commando's
 
 ```bash
-# Python tests draaien (origineel)
-cd /home/michel/vsdx-go && python -m pytest tests/ -v
-
-# Go tests (na implementatie)
+# Go tests
 cd /home/michel/vsdx-go && go test ./vsdx/... -v
+
+# Python tests (origineel, ter referentie)
+cd /home/michel/vsdx-go && python -m pytest tests/ -v
 ```
+
+## Huidige Status
+
+- 11 Go source bestanden, ~2150 lines code + ~1830 lines tests = ~3980 total
+- 55 test cases (alle passing)
+- Fasen 1-3 compleet: lezen, navigatie, bewerken, opslaan
+- Afhankelijkheid: `github.com/beevik/etree` v1.4.1

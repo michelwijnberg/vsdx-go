@@ -1,148 +1,304 @@
-## vsdx - A python library for processing Visio .vsdx files
+# vsdx-go
 
-![PyPI](https://img.shields.io/pypi/v/vsdx)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/vsdx)
+A Go library for reading, editing, and writing Microsoft Visio (.vsdx) files.
 
-[![pytest](https://github.com/dave-howard/vsdx/actions/workflows/test.yaml/badge.svg)](https://github.com/dave-howard/vsdx/actions/workflows/test.yaml)
-[![Documentation Status](https://readthedocs.org/projects/vsdx/badge/?version=latest)](https://vsdx.readthedocs.io/en/latest/?badge=latest)
+This is a Go port of the Python [vsdx](https://github.com/dave-howard/vsdx) library (v0.6.1).
 
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/vsdx)
-[![vsdx](https://snyk.io/advisor/python/vsdx/badge.svg)](https://snyk.io/advisor/python/vsdx)
+## Installation
 
-__.vsdx files can be processed in two ways, directly via python code as in
-example 1 below, or indirectly using a jinja template as in example 2__
-
-For quick start documentation please see
-[https://vsdx.readthedocs.io/en/latest/quickstart.html](https://vsdx.readthedocs.io/en/latest/quickstart.html)
-
-__Example 1__ code to find a shape with specific text, remove it, and
-then save the updated .vsdx file:
-
-```python
-from vsdx import VisioFile
-
-filename = 'my_file.vsdx'
-# open a visio file
-with VisioFile(filename) as vis:
-  # find shape by its text on first page
-  shape = vis.pages[0].find_shape_by_text('Shape to remove')
-  # remove the shape if found
-  if shape:
-    shape.remove()
-    # save a new copy
-    vis.save_vsdx('shape_removed.vsdx')
+```bash
+go get github.com/MichelW6667/vsdx-go/vsdx
 ```
 
-__Example 2__ creating a new vsdx file from a template and context data
-using jinja.  
-Note that as vsdx does not lend itself well to ordered statements like
-`{% if something %}my content{% endif %}` or `{% for x in list_value
-%}x={{ x }}{% endfor %}` this package provides mechanisms to help -
-refer to tests for more details.
+Requires Go 1.21 or later.
 
-```python
-from vsdx import VisioFile
+## Quick Start
 
-filename = 'my_template_file.vsdx'  # file containing jinja code
-context = {'value1': 10, 'list_value': [1,2,3]}  # data for the template
-with VisioFile('my_template_file.vsdx') as vis: 
-    vis.jinja_render_vsdx(context=context)
-    vis.save_vsdx('my_new_file.vsdx')
+### Open and read a .vsdx file
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/MichelW6667/vsdx-go/vsdx"
+)
+
+func main() {
+    vis, err := vsdx.Open("my_file.vsdx")
+    if err != nil {
+        panic(err)
+    }
+    defer vis.Close()
+
+    // List pages
+    for _, name := range vis.GetPageNames() {
+        fmt.Println("Page:", name)
+    }
+
+    // Get shapes on first page
+    page := vis.GetPage(0)
+    for _, shape := range page.ChildShapes() {
+        fmt.Printf("Shape ID=%s Text=%q Pos=(%.2f, %.2f)\n",
+            shape.ID, shape.Text(), shape.X(), shape.Y())
+    }
+}
 ```
 
-Please refer to tests/test.py for more usage
-examples in the form of pytest tests.
+### Find and modify shapes
 
-----
+```go
+// Find shape by text
+shape := page.FindShapeByText("Hello")
 
-###  Change Log
-- v0.6.1: Create directory of files in memory rather than in working directory when extracting vsdx
-- v0.5.21: Add support for Python 3.14, remove support for 3.7 (GitHub actions no longer support ubuntu-latest / 3.7)
-- v0.5.20: Note support for Python 3.13
-- v0.5.19: Fix Page.is_master_page prop and add tests
-- v0.5.18: Add support for reading (not creating/saving) .vsdm files (macro-enabled)
-- v0.5.17: Fix bug with adding multiple connectors to a vsdx with no existing master files/rels
-- v0.5.16: Add support & commit hook tests for Python 3.11 and 3.12
-- v0.5.15: Change DataProperty.value from field to property (get/set)
-- v0.5.14: Add Page.find_shape_by_attr()
-- v0.5.13: Update DataProperty class to get value of a property from V attrib or text
-- v0.5.12: Add `Shape.fill_color` and `Shape.text_color` properties with get and set tests
-- v0.5.11: Add `Shape.find_shapes_by_regex()` & `Page.find_shapes_by_regex()` - add check in `save_vsdx()` that file is open with more meaningful `VisioFileNotOpen` error
-- v0.5.10: Add Shape.angle property
-- v0.5.9: Add tests for master shape text property
-- v0.5.8: Add `Page.master_base_id` property
-- v0.5.7: Add support for nested shapes in `Page.all_shapes` and `Shape.all_shapes`. Add `Page.is_master_page` and `Shape.is_master_shape`. 
-- v0.5.6: Fix error in `Shape.text` with missing master shape. Improve `VisioFile.remove_page_by_index()` and add `VisioFile.remove_page_by_name()`.
-- v0.5.5: Added Shape.universal_name and used in Shape.set_start_and_finish(). Set Page.page_id on open file.
-- v0.5.4: Added better (but still incomplete) support for adding connectors between shapes
-- v0.5.3: Fixed missing deprecation dependency in setup.py
-- v0.5.2: deprecated Page.set_name() method and page.page_name property, in favour of Page.name. Unskipped test: test_shape_center(). Added find_shape.rst doc page
-- v0.5.1: added Page/Shape.find_shape_by_property_label_value()/find_shapes_by_property_label_value()
-- v0.5.0: deprecated Page.shapes property Page/Shape.sub_shapes() methods in favour of Page/Shape.child_shapes property. Add Shape.all_shapes property, convert Page.all_shapes() method to property
-- v0.4.20: Shape.set_cell_value()/set_cell_formula() create new cell if missing, add Media().rectangle and circle props, add Shape.bounds, relative_bounds, and end_arrow props
-- v0.4.19: correctly position new connector shapes between 'from' and 'to' shapes 
-- v0.4.18: add page.page_name, width and height properties
-- v0.4.17: register xml namespaces to improve compatibility of xml output
-- v0.4.16: Add Geometry class to read Shape geometry
-- v0.4.15: Add requirement for Jinja2 to package
-- v0.4.14: Include media/*.vsdx files in package
-- v0.4.13: Fix for master shape property inheritance / value overrides
-- v0.4.12: Add support for absolute paths
-- v0.4.11: Add support for master shape data properties, with related tests
-- v0.4.10: Add methods (`Shape.find_shape_by_property_label()` and `Shape.find_shapes_by_property_label`) to find shape or shapes by data property name.
-- v0.4.9: Add support for creating new connection between two objects. Fix ShapeProperty.value, and add label, sort_key, value_type and prompt 
-- v0.4.8: Support nested loops/showifs and combo of loop and if in same shape.
-- v0.4.7: Python 3.10.0rc1 added to test suite. Add `Shape.data_properties` property, and new class `ShapeProperty` to represent Visio Shape Data
-- v0.4.6: Add support for nested jinja loops in one shape
-- v0.4.5: Fix bug where some shapes have no parent, and inserting shape into empty page
-- v0.4.4: Added support for master page shape inheritance, ability to get `Shape.master_shape`, ability to 
-  update master shapes and persist changes to master shapes in `save_vsdx()`
-- v0.4.3: Added support for including/excluding pages via Jinja with `{% showif <statement> %}` in page name
-- v0.4.2: Added `VisioFile.add_page_at()` method taking `index` to allow insertion
-  at a specific point; Added `VisionFile.copy_page()` method to copy an existing page 
-  and insert at a specific index or relative to copied page (using `PagePosition` enum). 
-- v0.4.1: Added support for self referencing calculations in Jinja statements, 
-  such as `{% set self.x = self x + n * 3.2 %}`
-- v0.4.0: Added `VisioFile.jinja_set_selfs` to allow setting shape x and
-  y properties in Jinja template. Setting values, calculations, or if
-  statements are supported e.g. `{% set self.x = 1.5 %}` or `{% set
-  self.y = n * 3 %}` or `{% set self.x = 1.0 if n else 2.0 %}`
-- v0.3.5: Added `VisioFile.add_page()` method and tests
-- v0.3.4: Added `VisioFile.remove_page_by_index()` method to remove a
-  page, with associated test
-- v0.3.3: Added code of conduct and contributing guides
-- v0.3.2: updated README and updated tests for improved compatibility
-- v0.3.1: add jinja rendering support for if statements, via
-  `VisioFile.jinja_render_vsdx()` - similar to for loops but using a `{%
-  showif statement %}` in text of group shape controls whether that
-  group shape is included in vsdx file rendered. Note that the showif
-  statement is replaced with a standard if statement around the group
-  shape prior to rendering. Refer to test.py::test_jinja_if() for an
-  example
-- v0.3.0: update jinja rendering to support for loops, where for
-  statement is at start of group shape text, endfor is automatically
-  inserted before processing. Refer to test.py::test_basic_jinja_loop()
-  for code and test_jinja_loop.vsdx for content.
-- v0.2.10: add `VisioFile.jinja_render_vsdx()` - applying jinja
-  processing to Shape.text only
-- v0.2.9: check that Page has shapes tag when in shape_copy(), add test
-  to copy shape to new page
-- v0.2.8: find max shape ID in Page before creating Shape in
-  `Shape.copy()`. Find and load master pages when file is opened, store
-  in VisioFile.master_page_objects and .master_pages
-- v0.2.7: add `Shape.copy()` method
-- v0.2.6: added `Page.get_connectors_between()` to get zero or many
-  connectors between two shapes, by shape id or text
-- 0.2.5: Add new Shape properties connected_shapes (list of Shape
-  objects) and connects (list of Connect objects) properties to allow
-  related shapes to be identified (i.e. shapes and connectors) and
-  provide information on the relationship, in new Connect object. Also
-  new properties of shape begin_x/y, end_x/y, plus height/width
-  setters
-- 0.2.4: Added find_replace(old, new) method to Shape and Page classes
-  to recursively replace old with new
-- 0.2.3: Updated tests to output files to an /out folder. Added test
-  vsdx file with compound shape. Updated Shape text getter/setter
-- 0.2.2: Added x & y location setters to Shape, and move(x_delta,
-  y_delta) method - both with related tests
+// Modify shape properties
+shape.SetX(3.0)
+shape.SetY(5.0)
+shape.SetWidth(2.0)
+shape.SetHeight(1.5)
+shape.SetText("Updated Text")
+shape.SetFillColor("#ff0000")
 
+// Save to new file
+vis.SaveVsdx("modified.vsdx")
+```
+
+### Remove a shape
+
+```go
+vis, _ := vsdx.Open("my_file.vsdx")
+defer vis.Close()
+
+shape := vis.GetPage(0).FindShapeByText("Shape to remove")
+if shape != nil {
+    shape.Remove()
+    vis.SaveVsdx("shape_removed.vsdx")
+}
+```
+
+### Search with regex
+
+```go
+shapes, err := page.FindShapesByRegex(`\d{3}-\d{4}`)
+if err != nil {
+    panic(err)
+}
+for _, s := range shapes {
+    fmt.Println(s.Text())
+}
+```
+
+### Find and replace text
+
+```go
+page.FindReplace("old text", "new text")
+vis.SaveVsdx("updated.vsdx")
+```
+
+### Apply text templates
+
+```go
+// Replace {{key}} placeholders in shape text
+page.ApplyTextContext(map[string]string{
+    "date":     "2024-01-15",
+    "scenario": "Production",
+})
+vis.SaveVsdx("rendered.vsdx")
+```
+
+### Work with connectors
+
+```go
+page := vis.GetPage(0)
+
+// Get all connections on a page
+for _, c := range page.Connects() {
+    fmt.Printf("Connector %s -> Shape %s\n", c.ConnectorShapeID(), c.ShapeID())
+}
+
+// Find connectors between two shapes
+connectors, _ := page.GetConnectorsBetween("1", "", "2", "")
+
+// Get shapes connected to a specific shape
+shape := page.FindShapeByID("1")
+for _, connected := range shape.ConnectedShapes() {
+    fmt.Println("Connected to:", connected.Text())
+}
+```
+
+### Work with data properties
+
+```go
+shape := page.FindShapeByText("Server")
+props := shape.DataProperties()
+
+for label, prop := range props {
+    fmt.Printf("%s = %s\n", label, prop.Value())
+}
+
+// Find shapes by property
+shapes := page.FindShapesByPropertyLabelValue("Status", "Active")
+```
+
+### Master shapes
+
+```go
+// Access master pages
+for _, master := range vis.MasterPages {
+    fmt.Printf("Master: %s (ID=%s)\n", master.Name(), master.PageID())
+}
+
+// Get a shape's master
+shape := page.FindShapeByID("1")
+if masterPage := shape.MasterPage(); masterPage != nil {
+    fmt.Println("Master:", masterPage.Name())
+}
+```
+
+## API Overview
+
+### Core Types
+
+| Type | Description |
+|------|-------------|
+| `VisioFile` | Main entry point: open/save .vsdx files, manage pages |
+| `Page` | Page or master page: shapes, connections, dimensions |
+| `Shape` | Shape or group: text, position, size, style, cells |
+| `Cell` | Name/value/formula pair from XML Cell element |
+| `DataProperty` | Custom data property of a shape |
+| `Connect` | Connection between two shapes |
+| `Geometry` | Shape path definition (MoveTo, LineTo, etc.) |
+
+### VisioFile
+
+```go
+// Open/close
+vis, err := vsdx.Open("file.vsdx")     // also supports .vsdm
+vis.Close()
+
+// Pages
+vis.GetPage(0)                          // by index
+vis.GetPageByName("Page-1")             // by name
+vis.GetPageNames()                      // list names
+
+// Master pages
+vis.MasterPages                         // []*Page
+vis.GetMasterPageByID("2")              // by ID
+
+// Save
+vis.SaveVsdx("output.vsdx")
+```
+
+### Page
+
+```go
+// Properties
+page.Name()                             // get name
+page.SetName("New Name")                // set name
+page.Width() / page.SetWidth(10.0)      // page dimensions
+page.Height() / page.SetHeight(12.0)
+
+// Shapes
+page.ChildShapes()                      // top-level shapes
+page.AllShapes()                        // all shapes recursively
+
+// Search
+page.FindShapeByID("5")
+page.FindShapeByText("hello")
+page.FindShapesByText("hello")          // all matches
+page.FindShapesByRegex(`\d+`)           // regex search
+page.FindShapeByPropertyLabel("Status")
+page.FindShapesByPropertyLabelValue("Status", "Active")
+page.FindShapesWithSameMaster(shape)
+page.GetConnectorsBetween("1", "", "2", "")
+
+// Edit
+page.FindReplace("old", "new")
+page.ApplyTextContext(map[string]string{"key": "value"})
+page.Connects()                         // all connections
+page.AddConnect(connect)                // add connection
+```
+
+### Shape
+
+```go
+// Position and size (getters and setters)
+shape.X() / shape.SetX(3.0)            // PinX/PinY
+shape.Y() / shape.SetY(5.0)
+shape.Width() / shape.SetWidth(2.0)
+shape.Height() / shape.SetHeight(1.5)
+shape.Angle() / shape.SetAngle(0.5)
+shape.BeginX() / shape.SetBeginX(1.0)  // connector endpoints
+shape.EndX() / shape.SetEndX(5.0)
+
+// Text
+shape.Text()                            // get text (with master fallback)
+shape.SetText("new text")
+
+// Style
+shape.LineColor() / shape.SetLineColor("#ff0000")
+shape.FillColor() / shape.SetFillColor("#00ff00")
+shape.TextColor() / shape.SetTextColor("#0000ff")
+shape.LineWeight() / shape.SetLineWeight(0.5)
+shape.EndArrow() / shape.SetEndArrow(13)
+
+// Cells
+shape.CellValue("PinX")                // get cell value (with master fallback)
+shape.SetCellValue("PinX", "5.0")      // set or create cell
+shape.CellFormula("LocPinX")
+shape.SetCellFormula("LocPinX", "Width*0.5")
+
+// Hierarchy
+shape.ChildShapes()                     // direct children
+shape.AllShapes()                       // recursive
+shape.MasterShape()                     // master shape
+shape.MasterPage()                      // master page
+
+// Manipulation
+shape.Move(1.0, 2.0)                   // move by delta
+shape.Remove()                          // remove from page
+shape.FindReplace("old", "new")
+shape.ApplyTextFilter(map[string]string{"key": "value"})
+
+// Bounds
+shape.Bounds()                          // (beginX, beginY, endX, endY)
+shape.CenterXY()                        // center position
+shape.RelativeBounds()                  // relative to parent group
+
+// Data properties
+shape.DataProperties()                  // map[string]*DataProperty
+```
+
+## VSDX File Format
+
+A `.vsdx` file is a ZIP archive containing XML files:
+
+```
+[Content_Types].xml           Content type mappings
+docProps/app.xml              Document properties
+visio/document.xml            Styles and stylesheets
+visio/pages/pages.xml         Page definitions (names, IDs)
+visio/pages/page1.xml         Page content (shapes, connects)
+visio/masters/masters.xml     Master shape definitions
+visio/masters/master1.xml     Individual master shapes
+```
+
+## Implementation Status
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 1. Reading | Done | Open ZIP, parse XML, populate structs |
+| 2. Navigation | Done | Search shapes by ID, text, property, regex, master |
+| 3. Editing | Done | Modify properties, text, style, move, remove shapes |
+| 4. Writing | Done | Save modified XML back to .vsdx |
+| 5. Connectors | Planned | Create new connections between shapes |
+| 6. Templating | Planned | Go text/template based rendering |
+| 7. Diff | Planned | Compare two .vsdx files |
+
+## Credits
+
+This is a Go port of the Python [vsdx](https://github.com/dave-howard/vsdx) library by Dave Howard.
+
+## License
+
+BSD License - see [LICENSE](LICENSE) for details.

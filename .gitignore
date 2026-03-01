@@ -1,9 +1,32 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Python (legacy)
 /build/
 /dist/
 /.pytest_cache/
 /venv*/
 /vsdx.egg-info/
-/docs/_build/
-/tests/out/
 __pycache__/
-settings.json
+
+# Docs
+/docs/_build/
+
+# Test output
+/tests/out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

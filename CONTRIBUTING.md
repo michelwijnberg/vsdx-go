@@ -1,31 +1,36 @@
-# Contributions are welcome!
+# Contributing
 
-Please feel free to contribute to this package.
+Contributions are welcome! This project is a Go port of the Python [vsdx](https://github.com/dave-howard/vsdx) library.
 
-#### Ideas / Features
-If you have ideas for new features or improvements please raise a new
-issue (_though please do check existing issues_).
+## Development Setup
 
-If you would like to see an existing Feature request delivered - please
-comment on the issue.
+```bash
+git clone https://github.com/MichelW6667/vsdx-go.git
+cd vsdx-go
+go mod download
+```
 
-If you identify a problem - then please raise a new issue with details
-on how the recreate the problem so it can be resolved. If you are able
-to provide a failing test case that would be super helpful :)
+## Running Tests
 
-#### Code contributions
-If you want to work on an existing issue please comment your intent on
-the issue in case someone else is already actively working on it.
+```bash
+go test ./vsdx/... -v
+```
 
-Feel free to fork, develop and submit pull requests. I will try to be
-responsive - but apologies in advance if I am not!
+Test fixtures are in the `tests/` directory. When adding new features, please include test cases using existing `.vsdx` test files where possible.
 
-Please check all the tests pass before submitting a pull request, and
-please add new tests for any new features you create.
+## Project Structure
 
-#### Questions
-If you have any questions - feel free to raise an issue.
+- `vsdx/` - Main Go package with all library code
+- `tests/` - Test fixture `.vsdx` files
+- `python-vsdx/` - Original Python source (for reference during porting)
 
-Thank you :)
+## Guidelines
 
-Dave
+- Follow Go conventions and idioms
+- Use `github.com/beevik/etree` for XML parsing (matching the Python ElementTree approach)
+- Add tests for new features
+- Run `go vet ./...` and `go test ./...` before submitting
+
+## Porting from Python
+
+When porting a Python method, refer to the original implementation in `python-vsdx/vsdx/` and the corresponding Python tests in `tests/`. The Go API uses getter/setter methods instead of Python properties (e.g., `shape.X()` / `shape.SetX(v)` instead of `shape.x`).
