@@ -25,8 +25,10 @@ const (
 	// Style cells
 	CellLineWeight  CellName = "LineWeight"
 	CellLineColor   CellName = "LineColor"
+	CellLinePattern CellName = "LinePattern"
 	CellFillForegnd CellName = "FillForegnd"
 	CellEndArrow    CellName = "EndArrow"
+	CellLayerMember CellName = "LayerMember"
 
 	// Text pin cells
 	CellTxtPinX CellName = "TxtPinX"

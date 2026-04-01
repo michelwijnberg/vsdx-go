@@ -353,17 +353,62 @@ func (s *Shape) SetTextSize(v float64) {
 	s.ensureCharacterCell("Size", fmtFloat(v))
 }
 
+// SetCharBold sets or clears bold formatting on the shape's text.
+func (s *Shape) SetCharBold(bold bool) {
+	s.setCharStyleBit(1, bold)
+}
+
+// SetCharItalic sets or clears italic formatting on the shape's text.
+func (s *Shape) SetCharItalic(italic bool) {
+	s.setCharStyleBit(2, italic)
+}
+
+// setCharStyleBit sets or clears a bit in the Character Style cell.
+// Bit 1=Bold, 2=Italic, 4=Underline.
+func (s *Shape) setCharStyleBit(bit int, on bool) {
+	val := 0
+	charSection := s.xml.FindElement("Section[@N='Character']")
+	if charSection != nil {
+		if row := charSection.FindElement("Row"); row != nil {
+			if cell := row.FindElement("Cell[@N='Style']"); cell != nil {
+				val, _ = strconv.Atoi(cell.SelectAttrValue("V", "0"))
+			}
+		}
+	}
+	if on {
+		val |= bit
+	} else {
+		val &^= bit
+	}
+	s.ensureCharacterCell("Style", strconv.Itoa(val))
+}
+
+// SetCharSize sets the font size in points (e.g., 12 for 12pt).
+func (s *Shape) SetCharSize(pt float64) {
+	s.ensureCharacterCell("Size", fmtFloat(pt/72.0))
+}
+
+// SetCharFont sets the font name for the shape's text.
+func (s *Shape) SetCharFont(name string) {
+	s.ensureCharacterCell("Font", name)
+}
+
 // ensureCharacterCell sets a cell in the Character section, creating the
 // section and row if they don't exist.
 func (s *Shape) ensureCharacterCell(cellName, value string) {
-	charSection := s.xml.FindElement("Section[@N='Character']")
-	if charSection == nil {
-		charSection = s.xml.CreateElement("Section")
-		charSection.CreateAttr("N", "Character")
+	s.ensureSectionCell("Character", cellName, value)
+}
+
+// ensureSectionCell sets a cell in a named section, creating section and row if needed.
+func (s *Shape) ensureSectionCell(sectionName, cellName, value string) {
+	section := s.xml.FindElement("Section[@N='" + sectionName + "']")
+	if section == nil {
+		section = s.xml.CreateElement("Section")
+		section.CreateAttr("N", sectionName)
 	}
-	row := charSection.FindElement("Row")
+	row := section.FindElement("Row")
 	if row == nil {
-		row = charSection.CreateElement("Row")
+		row = section.CreateElement("Row")
 		row.CreateAttr("IX", "0")
 	}
 	cell := row.FindElement("Cell[@N='" + cellName + "']")
@@ -374,9 +419,104 @@ func (s *Shape) ensureCharacterCell(cellName, value string) {
 	cell.CreateAttr("V", value)
 }
 
+// Paragraph alignment constants.
+const (
+	AlignLeft    = 0
+	AlignCenter  = 1
+	AlignRight   = 2
+	AlignJustify = 3
+)
+
+// SetParagraphAlign sets the horizontal text alignment.
+// Use AlignLeft (0), AlignCenter (1), AlignRight (2), or AlignJustify (3).
+func (s *Shape) SetParagraphAlign(align int) {
+	s.ensureSectionCell("Paragraph", "HorzAlign", strconv.Itoa(align))
+}
+
+// Line pattern constants.
+const (
+	LinePatternNone       = 0
+	LinePatternSolid      = 1
+	LinePatternDash       = 2
+	LinePatternDot        = 3
+	LinePatternDashDot    = 4
+	LinePatternDashDotDot = 5
+)
+
+// SetLinePattern sets the line pattern.
+// Use LinePatternSolid (1), LinePatternDash (2), LinePatternDot (3), etc.
+func (s *Shape) SetLinePattern(pattern int) {
+	s.SetCellValue(CellLinePattern, strconv.Itoa(pattern))
+}
+
 // SetEndArrow sets the EndArrow cell value. Use 13 for standard arrow, 0 for none.
 func (s *Shape) SetEndArrow(v int) {
 	s.SetCellValue(CellEndArrow, strconv.Itoa(v))
+}
+
+// AddHyperlink adds a hyperlink to the shape.
+func (s *Shape) AddHyperlink(address, description string) {
+	section := s.xml.FindElement("Section[@N='Hyperlink']")
+	if section == nil {
+		section = s.xml.CreateElement("Section")
+		section.CreateAttr("N", "Hyperlink")
+	}
+
+	maxRow := 0
+	for _, row := range section.SelectElements("Row") {
+		rowName := row.SelectAttrValue("N", "")
+		if strings.HasPrefix(rowName, "Row_") {
+			if n, err := strconv.Atoi(rowName[4:]); err == nil && n > maxRow {
+				maxRow = n
+			}
+		}
+	}
+
+	row := section.CreateElement("Row")
+	row.CreateAttr("N", fmt.Sprintf("Row_%d", maxRow+1))
+	addCellXML(row, "Address", address, "")
+	addCellXML(row, "Description", description, "")
+	addCellXML(row, "SubAddress", "", "")
+	addCellXML(row, "ExtraInfo", "", "")
+	addCellXML(row, "Frame", "", "")
+	addCellXML(row, "Default", "0", "")
+	addCellXML(row, "Invisible", "0", "")
+}
+
+// AddConnectionPoint adds a connection point to the shape at the given local coordinates.
+// x and y are in the shape's coordinate space (e.g., Width*0.5 / Height*0.5 for center).
+func (s *Shape) AddConnectionPoint(x, y float64) {
+	section := s.xml.FindElement("Section[@N='Connection']")
+	if section == nil {
+		section = s.xml.CreateElement("Section")
+		section.CreateAttr("N", "Connection")
+	}
+
+	maxIX := -1
+	for _, row := range section.SelectElements("Row") {
+		if ix, err := strconv.Atoi(row.SelectAttrValue("IX", "")); err == nil && ix > maxIX {
+			maxIX = ix
+		}
+	}
+
+	row := section.CreateElement("Row")
+	row.CreateAttr("IX", strconv.Itoa(maxIX+1))
+	addCellXML(row, "X", fmtFloat(x), "")
+	addCellXML(row, "Y", fmtFloat(y), "")
+	addCellXML(row, "DirX", "0", "")
+	addCellXML(row, "DirY", "0", "")
+	addCellXML(row, "Type", "0", "")
+}
+
+// SetLayerMember sets which layers this shape belongs to.
+// layers is a semicolon-separated list of layer indices (e.g., "0" or "0;1").
+func (s *Shape) SetLayerMember(layers string) {
+	s.SetCellValue(CellLayerMember, layers)
+}
+
+// SetComment sets the Comment cell on the shape (visible as tooltip in Visio).
+func (s *Shape) SetComment(text string) {
+	s.SetCellValue("Comment", text)
 }
 
 // SetLineStyleID sets the LineStyle attribute on the shape element.
@@ -423,6 +563,33 @@ func clearAllText(e *etree.Element) {
 	for _, child := range e.ChildElements() {
 		clearAllText(child)
 	}
+}
+
+// AddGeometry creates a new empty Geometry section on the shape and returns it.
+// Use the returned Geometry's AddMoveTo/AddLineTo methods to define the path.
+func (s *Shape) AddGeometry() *Geometry {
+	section := s.xml.CreateElement("Section")
+	section.CreateAttr("N", "Geometry")
+	section.CreateAttr("IX", strconv.Itoa(len(s.Geometries)))
+
+	g := newGeometry(section, s)
+	s.Geometries = append(s.Geometries, g)
+	if s.Geometry == nil {
+		s.Geometry = g
+	}
+	return g
+}
+
+// AddGeometryRect adds a rectangular geometry using relative coordinates (0-1).
+// The rectangle fills the shape's Width x Height.
+func (s *Shape) AddGeometryRect() *Geometry {
+	g := s.AddGeometry()
+	g.AddRelMoveTo(0, 0)
+	g.AddRelLineTo(1, 0)
+	g.AddRelLineTo(1, 1)
+	g.AddRelLineTo(0, 1)
+	g.AddRelLineTo(0, 0)
+	return g
 }
 
 // --- Shape manipulation ---

@@ -2,6 +2,7 @@ package vsdx
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/beevik/etree"
 )
@@ -404,5 +405,72 @@ func (p *Page) FindReplace(old, new string) {
 func (p *Page) ApplyTextContext(context map[string]string) {
 	for _, s := range p.shapes() {
 		s.ApplyTextFilter(context)
+	}
+}
+
+// AddLayer adds a named layer to the page and returns the layer index.
+// Use the index with Shape.SetLayerMember() to assign shapes to the layer.
+func (p *Page) AddLayer(name string) int {
+	if p.vis == nil || p.vis.pagesXML == nil {
+		return -1
+	}
+
+	// Find the Page element in pages.xml and its PageSheet
+	var pageSheet *etree.Element
+	for _, pageElem := range p.vis.pagesXML.Root().SelectElements("Page") {
+		if pageElem.SelectAttrValue("ID", "") == p.pageID {
+			pageSheet = pageElem.SelectElement("PageSheet")
+			if pageSheet == nil {
+				pageSheet = pageElem.CreateElement("PageSheet")
+			}
+			break
+		}
+	}
+	if pageSheet == nil {
+		return -1
+	}
+
+	layerSection := pageSheet.FindElement("Section[@N='Layer']")
+	if layerSection == nil {
+		layerSection = pageSheet.CreateElement("Section")
+		layerSection.CreateAttr("N", "Layer")
+	}
+
+	maxIX := -1
+	for _, row := range layerSection.SelectElements("Row") {
+		if ix, err := strconv.Atoi(row.SelectAttrValue("IX", "")); err == nil && ix > maxIX {
+			maxIX = ix
+		}
+	}
+	ix := maxIX + 1
+
+	row := layerSection.CreateElement("Row")
+	row.CreateAttr("IX", strconv.Itoa(ix))
+	addCellXML(row, "Name", name, "")
+	addCellXML(row, "Visible", "1", "")
+	addCellXML(row, "Active", "0", "")
+	addCellXML(row, "Lock", "0", "")
+	addCellXML(row, "Print", "1", "")
+	addCellXML(row, "Snap", "1", "")
+	addCellXML(row, "Glue", "1", "")
+
+	return ix
+}
+
+// AutoSize adjusts the page dimensions to fit all shapes with the given margin (in inches).
+func (p *Page) AutoSize(margin float64) {
+	var maxX, maxY float64
+	for _, s := range p.AllShapes() {
+		_, _, ex, ey := s.Bounds()
+		if ex > maxX {
+			maxX = ex
+		}
+		if ey > maxY {
+			maxY = ey
+		}
+	}
+	if maxX > 0 || maxY > 0 {
+		p.SetWidth(maxX + margin)
+		p.SetHeight(maxY + margin)
 	}
 }

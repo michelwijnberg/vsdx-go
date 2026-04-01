@@ -2822,3 +2822,916 @@ func TestBreakXMLIntoLines(t *testing.T) {
 		t.Errorf("expected XML elements on separate lines, got: %v", lines)
 	}
 }
+
+// =============================================================================
+// Network Diagram Tests
+// =============================================================================
+
+// buildNetworkTopology creates a small network: 2 routers + 1 switch + connectors + data properties.
+// Returns the VisioFile (caller must Close) and the page.
+func buildNetworkTopology(t *testing.T) (*VisioFile, *Page, []*Shape) {
+	t.Helper()
+	vis, err := Open(testFile("blank.vsdx"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	page := vis.GetPage(0)
+
+	// Router 1
+	r1 := page.AddShape()
+	r1.SetX(2.0)
+	r1.SetY(8.0)
+	r1.SetWidth(1.0)
+	r1.SetHeight(1.0)
+	r1.SetText("router-1")
+	r1.AddDataProperty("Hostname", "Hostname", "router-1")
+	r1.AddDataProperty("IP", "IP Address", "10.0.0.1")
+	r1.AddDataProperty("Role", "Role", "core")
+
+	// Router 2
+	r2 := page.AddShape()
+	r2.SetX(6.0)
+	r2.SetY(8.0)
+	r2.SetWidth(1.0)
+	r2.SetHeight(1.0)
+	r2.SetText("router-2")
+	r2.AddDataProperty("Hostname", "Hostname", "router-2")
+	r2.AddDataProperty("IP", "IP Address", "10.0.0.2")
+	r2.AddDataProperty("Role", "Role", "core")
+
+	// Switch 1
+	sw := page.AddShape()
+	sw.SetX(4.0)
+	sw.SetY(4.0)
+	sw.SetWidth(1.2)
+	sw.SetHeight(0.8)
+	sw.SetText("switch-1")
+	sw.AddDataProperty("Hostname", "Hostname", "switch-1")
+	sw.AddDataProperty("IP", "IP Address", "10.0.1.1")
+	sw.AddDataProperty("Role", "Role", "access")
+
+	// Connect router-1 to switch-1
+	conn1, err := vis.ConnectShapes(page, r1, sw)
+	if err != nil {
+		t.Fatalf("ConnectShapes r1-sw: %v", err)
+	}
+	conn1.SetText("ge-0/0/0")
+
+	// Connect router-2 to switch-1
+	conn2, err := vis.ConnectShapes(page, r2, sw)
+	if err != nil {
+		t.Fatalf("ConnectShapes r2-sw: %v", err)
+	}
+	conn2.SetText("ge-0/0/1")
+
+	return vis, page, []*Shape{r1, r2, sw}
+}
+
+func TestNetworkFindShapesByText(t *testing.T) {
+	vis, page, _ := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	// Page.FindShapesByText - find all routers
+	routers := page.FindShapesByText("router")
+	if len(routers) != 2 {
+		t.Fatalf("FindShapesByText('router') = %d shapes, want 2", len(routers))
+	}
+
+	// Find single switch
+	switches := page.FindShapesByText("switch")
+	if len(switches) != 1 {
+		t.Fatalf("FindShapesByText('switch') = %d shapes, want 1", len(switches))
+	}
+	if switches[0].Text() != "switch-1" {
+		t.Errorf("switch text = %q, want 'switch-1'", switches[0].Text())
+	}
+
+	// No match
+	none := page.FindShapesByText("firewall")
+	if len(none) != 0 {
+		t.Errorf("FindShapesByText('firewall') = %d shapes, want 0", len(none))
+	}
+}
+
+func TestNetworkFindShapeByAttr(t *testing.T) {
+	vis, page, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	// Page.FindShapeByAttr - find by ID
+	found := page.FindShapeByAttr("ID", shapes[0].ID)
+	if found == nil {
+		t.Fatal("FindShapeByAttr by ID returned nil")
+	}
+	if found.Text() != "router-1" {
+		t.Errorf("found text = %q, want 'router-1'", found.Text())
+	}
+
+	// Not found
+	notFound := page.FindShapeByAttr("ID", "99999")
+	if notFound != nil {
+		t.Error("FindShapeByAttr should return nil for nonexistent ID")
+	}
+}
+
+func TestNetworkFindByPropertyLabel(t *testing.T) {
+	vis, page, _ := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	// Page.FindShapesByPropertyLabel - all shapes with "Role"
+	withRole := page.FindShapesByPropertyLabel("Role")
+	if len(withRole) != 3 {
+		t.Fatalf("FindShapesByPropertyLabel('Role') = %d, want 3", len(withRole))
+	}
+
+	// Page.FindShapeByPropertyLabelValue - find the access switch
+	accessShape := page.FindShapeByPropertyLabelValue("Role", "access")
+	if accessShape == nil {
+		t.Fatal("FindShapeByPropertyLabelValue('Role','access') returned nil")
+	}
+	if accessShape.Text() != "switch-1" {
+		t.Errorf("access shape text = %q, want 'switch-1'", accessShape.Text())
+	}
+
+	// Find all core devices
+	coreDevices := page.FindShapesByPropertyLabelValue("Role", "core")
+	if len(coreDevices) != 2 {
+		t.Fatalf("FindShapesByPropertyLabelValue('Role','core') = %d, want 2", len(coreDevices))
+	}
+
+	// Not found
+	nope := page.FindShapeByPropertyLabelValue("Role", "distribution")
+	if nope != nil {
+		t.Error("expected nil for nonexistent property value")
+	}
+}
+
+func TestNetworkConnectTraversal(t *testing.T) {
+	vis, page, _ := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	connects := page.Connects()
+	if len(connects) < 2 {
+		t.Fatalf("connects = %d, want >= 2", len(connects))
+	}
+
+	// Test Connect.Shape() and Connect.ConnectorShape()
+	for _, c := range connects {
+		shape := c.Shape()
+		connShape := c.ConnectorShape()
+		if shape == nil {
+			t.Error("Connect.Shape() returned nil")
+		}
+		if connShape == nil {
+			t.Error("Connect.ConnectorShape() returned nil")
+		}
+	}
+}
+
+func TestNetworkPropertyUpdate(t *testing.T) {
+	vis, page, _ := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	// Find router-1 and update its IP
+	router := page.FindShapeByPropertyLabelValue("Hostname", "router-1")
+	if router == nil {
+		t.Fatal("router-1 not found")
+	}
+
+	props := router.DataProperties()
+	ipProp, ok := props["IP Address"]
+	if !ok {
+		t.Fatal("'IP Address' property not found")
+	}
+	if ipProp.Value() != "10.0.0.1" {
+		t.Errorf("IP = %q, want '10.0.0.1'", ipProp.Value())
+	}
+
+	// SetValue
+	ipProp.SetValue("192.168.1.1")
+	if ipProp.Value() != "192.168.1.1" {
+		t.Errorf("after SetValue, IP = %q, want '192.168.1.1'", ipProp.Value())
+	}
+
+	// Round-trip: save and reopen
+	data, err := vis.SaveVsdxBytes()
+	if err != nil {
+		t.Fatalf("SaveVsdxBytes: %v", err)
+	}
+	vis2, err := OpenBytes(data)
+	if err != nil {
+		t.Fatalf("OpenBytes: %v", err)
+	}
+	defer vis2.Close() //nolint:errcheck
+
+	router2 := vis2.GetPage(0).FindShapeByPropertyLabelValue("Hostname", "router-1")
+	if router2 == nil {
+		t.Fatal("router-1 not found after reopen")
+	}
+	props2 := router2.DataProperties()
+	if ip2, ok := props2["IP Address"]; !ok {
+		t.Fatal("'IP Address' property not found after reopen")
+	} else if ip2.Value() != "192.168.1.1" {
+		t.Errorf("IP after reopen = %q, want '192.168.1.1'", ip2.Value())
+	}
+}
+
+func TestNetworkShapeInfo(t *testing.T) {
+	vis, page, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	r1 := shapes[0]
+
+	// Shape.String()
+	str := r1.String()
+	if !strings.Contains(str, "router-1") {
+		t.Errorf("String() = %q, should contain 'router-1'", str)
+	}
+	if !strings.Contains(str, r1.ID) {
+		t.Errorf("String() = %q, should contain ID %q", str, r1.ID)
+	}
+
+	// Shape.IsMasterShape() - these are regular shapes, not masters
+	if r1.IsMasterShape() {
+		t.Error("regular shape should not be a master shape")
+	}
+
+	// Page.IsMasterPage()
+	if page.IsMasterPage() {
+		t.Error("regular page should not be a master page")
+	}
+
+	// Check actual master pages
+	for _, mp := range vis.MasterPages {
+		if !mp.IsMasterPage() {
+			t.Errorf("master page %q should report IsMasterPage=true", mp.Name())
+		}
+	}
+
+	// Shape.Center()
+	center := r1.Center()
+	if center.X != r1.X() || center.Y != r1.Y() {
+		t.Errorf("Center() = (%v,%v), want (%v,%v)", center.X, center.Y, r1.X(), r1.Y())
+	}
+
+	// Shape.BoundsRect()
+	rect := r1.BoundsRect()
+	bx, by, ex, ey := r1.Bounds()
+	if rect.BeginX != bx || rect.BeginY != by || rect.EndX != ex || rect.EndY != ey {
+		t.Errorf("BoundsRect mismatch with Bounds()")
+	}
+
+	// Shape.RelativeBoundsRect()
+	relRect := r1.RelativeBoundsRect()
+	rbx, rby, rex, rey := r1.RelativeBounds()
+	if relRect.BeginX != rbx || relRect.BeginY != rby || relRect.EndX != rex || relRect.EndY != rey {
+		t.Errorf("RelativeBoundsRect mismatch with RelativeBounds()")
+	}
+
+	// Cell.String()
+	if cell, ok := r1.Cells[string(CellPinX)]; ok {
+		cs := cell.String()
+		if !strings.Contains(cs, "Cell:") {
+			t.Errorf("Cell.String() = %q, should contain 'Cell:'", cs)
+		}
+	}
+
+	// Shape.LocXFormula() / LocYFormula()
+	lxf := r1.LocXFormula()
+	lyf := r1.LocYFormula()
+	if lxf == "" || lyf == "" {
+		t.Errorf("LocXFormula=%q, LocYFormula=%q, expected non-empty formulas", lxf, lyf)
+	}
+
+	// Shape.SetTextSize
+	r1.SetTextSize(0.166667) // 12pt
+	charSection := r1.XML().FindElement("Section[@N='Character']")
+	if charSection == nil {
+		t.Fatal("Character section should exist after SetTextSize")
+	}
+	sizeCell := charSection.FindElement("Row/Cell[@N='Size']")
+	if sizeCell == nil {
+		t.Fatal("Size cell should exist after SetTextSize")
+	}
+}
+
+func TestNetworkGeometryStartPoint(t *testing.T) {
+	vis, err := Open(testFile("test3_house.vsdx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vis.Close() //nolint:errcheck
+
+	page := vis.GetPage(0)
+	for _, shape := range page.AllShapes() {
+		for _, g := range shape.Geometries {
+			pt := g.StartPoint()
+			sx, sy := g.StartPos()
+			if pt.X != sx || pt.Y != sy {
+				t.Errorf("StartPoint() != StartPos() for shape %s", shape.ID)
+			}
+		}
+	}
+}
+
+func TestNetworkGeometryRowOperations(t *testing.T) {
+	vis, err := Open(testFile("test3_house.vsdx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vis.Close() //nolint:errcheck
+
+	page := vis.GetPage(0)
+	shape := page.ChildShapes()[0]
+	if len(shape.Geometries) == 0 {
+		t.Fatal("no geometry")
+	}
+
+	geom := shape.Geometries[0]
+	// Find a row to test setters
+	for _, row := range geom.Rows {
+		// SetRowType
+		origType := row.RowType()
+		row.SetRowType(origType)
+		if row.RowType() != origType {
+			t.Errorf("SetRowType roundtrip failed")
+		}
+
+		// SetIndex
+		origIx := row.Index()
+		row.SetIndex(origIx)
+		if row.Index() != origIx {
+			t.Errorf("SetIndex roundtrip failed")
+		}
+
+		// SetDelBool
+		row.SetDelBool(true)
+		if !row.DelBool() {
+			t.Error("SetDelBool(true) should make DelBool() true")
+		}
+		row.SetDelBool(false)
+		if row.DelBool() {
+			t.Error("SetDelBool(false) should make DelBool() false")
+		}
+
+		// GeometryCell operations
+		for _, cell := range row.Cells {
+			// Formula / Func
+			f := cell.Formula()
+			f2 := cell.Func()
+			if f != f2 {
+				t.Errorf("Formula() != Func(): %q vs %q", f, f2)
+			}
+
+			// SetFormula
+			cell.SetFormula("test")
+			if cell.Formula() != "test" {
+				t.Error("SetFormula failed")
+			}
+			cell.SetFormula(f) // restore
+
+			// SetName
+			origName := cell.Name()
+			cell.SetName(origName)
+			if cell.Name() != origName {
+				t.Error("SetName roundtrip failed")
+			}
+		}
+		break // one row is enough
+	}
+
+	// CreateRowXML
+	row := geom.Rows["1"] // use existing row
+	if row != nil {
+		newRow := row.CreateRowXML("LineTo", "99")
+		if newRow == nil {
+			t.Error("CreateRowXML should return new element")
+		}
+
+		// Duplicate index should return nil
+		dup := row.CreateRowXML("LineTo", "99")
+		if dup != nil {
+			t.Error("CreateRowXML with duplicate index should return nil")
+		}
+
+		// Empty params should return nil
+		nilRow := row.CreateRowXML("", "")
+		if nilRow != nil {
+			t.Error("CreateRowXML with empty params should return nil")
+		}
+	}
+
+	// CreateCellXML
+	if row != nil {
+		xCell := row.Cells["X"]
+		if xCell != nil {
+			newCell := xCell.CreateCellXML("TestCell")
+			if newCell == nil {
+				t.Error("CreateCellXML should return new element")
+			}
+		}
+	}
+}
+
+func TestVisioFileAccessors(t *testing.T) {
+	vis, err := Open(testFile("test1.vsdx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vis.Close() //nolint:errcheck
+
+	// AppXML
+	if vis.AppXML() == nil {
+		t.Error("AppXML() should not be nil")
+	}
+
+	// PagesXML
+	if vis.PagesXML() == nil {
+		t.Error("PagesXML() should not be nil")
+	}
+
+	// MastersXML - may be nil for files without masters
+	// Just call it to exercise the code path
+	_ = vis.MastersXML()
+
+	// PrettyPrintElement
+	root := vis.PagesXML().Root()
+	if root != nil {
+		pp := PrettyPrintElement(root)
+		if pp == "" {
+			t.Error("PrettyPrintElement should return non-empty string")
+		}
+		if !strings.Contains(pp, "<") {
+			t.Error("PrettyPrintElement should contain XML tags")
+		}
+	}
+}
+
+func TestFileErrorUnwrap(t *testing.T) {
+	inner := fmt.Errorf("something broke")
+	fe := &FileError{Path: "/tmp/test.vsdx", Err: inner}
+
+	if fe.Unwrap() != inner {
+		t.Error("Unwrap should return the inner error")
+	}
+	if !strings.Contains(fe.Error(), "/tmp/test.vsdx") {
+		t.Errorf("Error() = %q, should contain path", fe.Error())
+	}
+}
+
+func TestCharacterFormatting(t *testing.T) {
+	vis, _, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	s := shapes[0]
+
+	// SetCharBold
+	s.SetCharBold(true)
+	charSection := s.XML().FindElement("Section[@N='Character']")
+	if charSection == nil {
+		t.Fatal("Character section should exist")
+	}
+	styleCell := charSection.FindElement("Row/Cell[@N='Style']")
+	if styleCell == nil || styleCell.SelectAttrValue("V", "") != "1" {
+		t.Error("SetCharBold(true) should set Style=1")
+	}
+
+	// Bold + Italic combined
+	s.SetCharItalic(true)
+	styleCell = charSection.FindElement("Row/Cell[@N='Style']")
+	if styleCell.SelectAttrValue("V", "") != "3" {
+		t.Errorf("Bold+Italic should be Style=3, got %s", styleCell.SelectAttrValue("V", ""))
+	}
+
+	// Clear bold, keep italic
+	s.SetCharBold(false)
+	styleCell = charSection.FindElement("Row/Cell[@N='Style']")
+	if styleCell.SelectAttrValue("V", "") != "2" {
+		t.Errorf("Italic only should be Style=2, got %s", styleCell.SelectAttrValue("V", ""))
+	}
+
+	// SetCharSize (12pt)
+	s.SetCharSize(12)
+	sizeCell := charSection.FindElement("Row/Cell[@N='Size']")
+	if sizeCell == nil {
+		t.Fatal("Size cell should exist")
+	}
+	// 12/72 = 0.166667
+	sizeVal := sizeCell.SelectAttrValue("V", "")
+	if !strings.HasPrefix(sizeVal, "0.1666") {
+		t.Errorf("SetCharSize(12) = %q, want ~0.166667", sizeVal)
+	}
+
+	// SetCharFont
+	s.SetCharFont("Consolas")
+	fontCell := charSection.FindElement("Row/Cell[@N='Font']")
+	if fontCell == nil || fontCell.SelectAttrValue("V", "") != "Consolas" {
+		t.Error("SetCharFont should set Font cell")
+	}
+}
+
+func TestParagraphAlign(t *testing.T) {
+	vis, _, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	s := shapes[0]
+	s.SetParagraphAlign(AlignCenter)
+
+	paraSection := s.XML().FindElement("Section[@N='Paragraph']")
+	if paraSection == nil {
+		t.Fatal("Paragraph section should exist")
+	}
+	alignCell := paraSection.FindElement("Row/Cell[@N='HorzAlign']")
+	if alignCell == nil || alignCell.SelectAttrValue("V", "") != "1" {
+		t.Error("SetParagraphAlign(AlignCenter) should set HorzAlign=1")
+	}
+
+	// Change to right
+	s.SetParagraphAlign(AlignRight)
+	alignCell = paraSection.FindElement("Row/Cell[@N='HorzAlign']")
+	if alignCell.SelectAttrValue("V", "") != "2" {
+		t.Error("SetParagraphAlign(AlignRight) should set HorzAlign=2")
+	}
+}
+
+func TestLinePattern(t *testing.T) {
+	vis, _, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	s := shapes[0]
+	s.SetLinePattern(LinePatternDash)
+
+	val := s.CellValue(CellLinePattern)
+	if val != "2" {
+		t.Errorf("SetLinePattern(Dash) = %q, want '2'", val)
+	}
+
+	s.SetLinePattern(LinePatternDot)
+	val = s.CellValue(CellLinePattern)
+	if val != "3" {
+		t.Errorf("SetLinePattern(Dot) = %q, want '3'", val)
+	}
+}
+
+func TestAddGeometryRect(t *testing.T) {
+	vis, _, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	s := shapes[0]
+	g := s.AddGeometryRect()
+
+	if g == nil {
+		t.Fatal("AddGeometryRect returned nil")
+	}
+	// Should have 5 rows: RelMoveTo + 4x RelLineTo
+	if len(g.Rows) != 5 {
+		t.Fatalf("geometry rows = %d, want 5", len(g.Rows))
+	}
+
+	// Verify first row is RelMoveTo
+	if row, ok := g.Rows["1"]; ok {
+		if row.RowType() != "RelMoveTo" {
+			t.Errorf("row 1 type = %q, want RelMoveTo", row.RowType())
+		}
+	}
+
+	// Save and reopen
+	data, err := vis.SaveVsdxBytes()
+	if err != nil {
+		t.Fatalf("SaveVsdxBytes: %v", err)
+	}
+	vis2, err := OpenBytes(data)
+	if err != nil {
+		t.Fatalf("OpenBytes: %v", err)
+	}
+	defer vis2.Close() //nolint:errcheck
+
+	// Verify geometry survived
+	page := vis2.GetPage(0)
+	found := page.FindShapeByText("router-1")
+	if found == nil {
+		t.Fatal("shape not found after reopen")
+	}
+	if len(found.Geometries) == 0 {
+		t.Error("geometry lost after round-trip")
+	}
+}
+
+func TestGeometryBuilders(t *testing.T) {
+	vis, _, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	s := shapes[0]
+	g := s.AddGeometry()
+
+	// Absolute coordinates
+	g.AddMoveTo(0, 0)
+	g.AddLineTo(2, 0)
+	g.AddLineTo(2, 1)
+	g.AddArcTo(0, 1, 0.5)
+
+	if len(g.Rows) != 4 {
+		t.Fatalf("rows = %d, want 4", len(g.Rows))
+	}
+
+	// Check ArcTo has A (bow) cell
+	arcRow := g.Rows["4"]
+	if arcRow == nil {
+		t.Fatal("ArcTo row not found")
+	}
+	if arcRow.RowType() != "ArcTo" {
+		t.Errorf("row type = %q, want ArcTo", arcRow.RowType())
+	}
+	if aCell, ok := arcRow.Cells["A"]; !ok {
+		t.Error("ArcTo should have A cell")
+	} else if aCell.Value() != "0.5" {
+		t.Errorf("A cell = %q, want '0.5'", aCell.Value())
+	}
+}
+
+func TestAddHyperlink(t *testing.T) {
+	vis, _, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	s := shapes[0]
+	s.AddHyperlink("https://osprey.example.com/device/router-1", "Open in Osprey")
+
+	section := s.XML().FindElement("Section[@N='Hyperlink']")
+	if section == nil {
+		t.Fatal("Hyperlink section should exist")
+	}
+
+	row := section.FindElement("Row[@N='Row_1']")
+	if row == nil {
+		t.Fatal("Row_1 should exist")
+	}
+
+	addr := row.FindElement("Cell[@N='Address']")
+	if addr == nil || addr.SelectAttrValue("V", "") != "https://osprey.example.com/device/router-1" {
+		t.Error("Address cell mismatch")
+	}
+
+	desc := row.FindElement("Cell[@N='Description']")
+	if desc == nil || desc.SelectAttrValue("V", "") != "Open in Osprey" {
+		t.Error("Description cell mismatch")
+	}
+
+	// Add second hyperlink
+	s.AddHyperlink("https://grafana.example.com/router-1", "Grafana")
+	row2 := section.FindElement("Row[@N='Row_2']")
+	if row2 == nil {
+		t.Error("second hyperlink Row_2 should exist")
+	}
+
+	// Round-trip
+	data, err := vis.SaveVsdxBytes()
+	if err != nil {
+		t.Fatalf("SaveVsdxBytes: %v", err)
+	}
+	vis2, err := OpenBytes(data)
+	if err != nil {
+		t.Fatalf("OpenBytes: %v", err)
+	}
+	defer vis2.Close() //nolint:errcheck
+
+	found := vis2.GetPage(0).FindShapeByText("router-1")
+	if found == nil {
+		t.Fatal("shape not found")
+	}
+	hlSection := found.XML().FindElement("Section[@N='Hyperlink']")
+	if hlSection == nil {
+		t.Error("Hyperlink section lost after round-trip")
+	}
+}
+
+func TestAddConnectionPoint(t *testing.T) {
+	vis, _, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	s := shapes[0]
+	w, h := s.Width(), s.Height()
+
+	// Add 4 connection points at edges
+	s.AddConnectionPoint(w/2, 0)     // bottom
+	s.AddConnectionPoint(w/2, h)     // top
+	s.AddConnectionPoint(0, h/2)     // left
+	s.AddConnectionPoint(w, h/2)     // right
+
+	section := s.XML().FindElement("Section[@N='Connection']")
+	if section == nil {
+		t.Fatal("Connection section should exist")
+	}
+
+	rows := section.SelectElements("Row")
+	if len(rows) != 4 {
+		t.Fatalf("connection points = %d, want 4", len(rows))
+	}
+
+	// Verify IX numbering
+	for i, row := range rows {
+		ix := row.SelectAttrValue("IX", "")
+		if ix != strconv.Itoa(i) {
+			t.Errorf("row %d IX = %q, want %q", i, ix, strconv.Itoa(i))
+		}
+	}
+}
+
+func TestAddLayerAndSetMember(t *testing.T) {
+	vis, page, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	// Add layers
+	l3Idx := page.AddLayer("L3 Links")
+	l2Idx := page.AddLayer("L2 Links")
+	labelIdx := page.AddLayer("Labels")
+
+	if l3Idx != 0 || l2Idx != 1 || labelIdx != 2 {
+		t.Errorf("layer indices = %d,%d,%d, want 0,1,2", l3Idx, l2Idx, labelIdx)
+	}
+
+	// Assign shapes to layers
+	shapes[0].SetLayerMember("0")     // router on L3
+	shapes[2].SetLayerMember("0;1")   // switch on L3 + L2
+
+	if shapes[0].CellValue(CellLayerMember) != "0" {
+		t.Error("router layer should be '0'")
+	}
+	if shapes[2].CellValue(CellLayerMember) != "0;1" {
+		t.Error("switch layer should be '0;1'")
+	}
+
+	// Round-trip
+	data, err := vis.SaveVsdxBytes()
+	if err != nil {
+		t.Fatalf("SaveVsdxBytes: %v", err)
+	}
+	vis2, err := OpenBytes(data)
+	if err != nil {
+		t.Fatalf("OpenBytes: %v", err)
+	}
+	defer vis2.Close() //nolint:errcheck
+
+	// Verify layer section in pages.xml
+	page2 := vis2.GetPage(0)
+	ps := page2.pagesheetXML()
+	if ps == nil {
+		t.Fatal("PageSheet should exist after reopen")
+	}
+	layerSection := ps.FindElement("Section[@N='Layer']")
+	if layerSection == nil {
+		t.Fatal("Layer section should exist after reopen")
+	}
+	layerRows := layerSection.SelectElements("Row")
+	if len(layerRows) != 3 {
+		t.Fatalf("layers after reopen = %d, want 3", len(layerRows))
+	}
+}
+
+func TestAutoSize(t *testing.T) {
+	vis, page, _ := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	page.AutoSize(0.5)
+
+	w := page.Width()
+	h := page.Height()
+	// router-2 is at x=6, width=1, so rightmost edge = 6.5
+	// router-1 is at y=8, height=1, so top edge = 8.5
+	// With 0.5 margin: width >= 7, height >= 9
+	if w < 7.0 {
+		t.Errorf("page width = %v, want >= 7.0", w)
+	}
+	if h < 9.0 {
+		t.Errorf("page height = %v, want >= 9.0", h)
+	}
+}
+
+func TestSetComment(t *testing.T) {
+	vis, _, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	shapes[0].SetComment("Cisco ISR 4321 - Core Router")
+	if shapes[0].CellValue("Comment") != "Cisco ISR 4321 - Core Router" {
+		t.Error("SetComment value mismatch")
+	}
+}
+
+func TestFormattingRoundTrip(t *testing.T) {
+	vis, page, _ := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	// Apply all formatting to a shape
+	s := page.FindShapeByText("router-1")
+	s.SetCharBold(true)
+	s.SetCharSize(10)
+	s.SetCharFont("Arial")
+	s.SetParagraphAlign(AlignCenter)
+	s.SetLinePattern(LinePatternDash)
+	s.SetLineWeight(0.02)
+	s.SetLineColor("#0070C0")
+	s.AddHyperlink("https://osprey.example.com", "Osprey")
+	s.AddConnectionPoint(0.5, 0)
+	s.AddConnectionPoint(0.5, 1)
+	s.SetComment("Core Router")
+
+	l3 := page.AddLayer("L3")
+	s.SetLayerMember(strconv.Itoa(l3))
+
+	// Save and reopen
+	data, err := vis.SaveVsdxBytes()
+	if err != nil {
+		t.Fatalf("SaveVsdxBytes: %v", err)
+	}
+	vis2, err := OpenBytes(data)
+	if err != nil {
+		t.Fatalf("OpenBytes: %v", err)
+	}
+	defer vis2.Close() //nolint:errcheck
+
+	s2 := vis2.GetPage(0).FindShapeByText("router-1")
+	if s2 == nil {
+		t.Fatal("shape not found after reopen")
+	}
+
+	// Verify formatting survived
+	if s2.CellValue(CellLinePattern) != "2" {
+		t.Errorf("LinePattern = %q, want '2'", s2.CellValue(CellLinePattern))
+	}
+	if s2.CellValue(CellLineColor) != "#0070C0" {
+		t.Errorf("LineColor = %q, want '#0070C0'", s2.CellValue(CellLineColor))
+	}
+	if s2.CellValue("Comment") != "Core Router" {
+		t.Errorf("Comment = %q, want 'Core Router'", s2.CellValue("Comment"))
+	}
+
+	charSection := s2.XML().FindElement("Section[@N='Character']")
+	if charSection == nil {
+		t.Fatal("Character section missing after reopen")
+	}
+	style := charSection.FindElement("Row/Cell[@N='Style']")
+	if style == nil || style.SelectAttrValue("V", "") != "1" {
+		t.Error("Bold style missing after reopen")
+	}
+
+	hlSection := s2.XML().FindElement("Section[@N='Hyperlink']")
+	if hlSection == nil {
+		t.Error("Hyperlink section missing after reopen")
+	}
+
+	connSection := s2.XML().FindElement("Section[@N='Connection']")
+	if connSection == nil {
+		t.Error("Connection section missing after reopen")
+	}
+}
+
+func TestNetworkTopologyRoundTrip(t *testing.T) {
+	vis, _, _ := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	// Save and reopen
+	data, err := vis.SaveVsdxBytes()
+	if err != nil {
+		t.Fatalf("SaveVsdxBytes: %v", err)
+	}
+	vis2, err := OpenBytes(data)
+	if err != nil {
+		t.Fatalf("OpenBytes: %v", err)
+	}
+	defer vis2.Close() //nolint:errcheck
+
+	page := vis2.GetPage(0)
+
+	// Verify all shapes survived
+	allShapes := page.ChildShapes()
+	// 3 devices + 2 connectors = 5
+	if len(allShapes) < 5 {
+		t.Fatalf("shapes after reopen = %d, want >= 5", len(allShapes))
+	}
+
+	// Verify text search works after round-trip
+	routers := page.FindShapesByText("router")
+	if len(routers) != 2 {
+		t.Errorf("routers after reopen = %d, want 2", len(routers))
+	}
+
+	// Verify property search works after round-trip
+	coreDevices := page.FindShapesByPropertyLabelValue("Role", "core")
+	if len(coreDevices) != 2 {
+		t.Errorf("core devices after reopen = %d, want 2", len(coreDevices))
+	}
+
+	// Verify connects survived
+	connects := page.Connects()
+	if len(connects) < 2 {
+		t.Errorf("connects after reopen = %d, want >= 2", len(connects))
+	}
+
+	// Traverse connections
+	for _, c := range connects {
+		if c.Shape() == nil {
+			t.Error("Connect.Shape() nil after reopen")
+		}
+		if c.ConnectorShape() == nil {
+			t.Error("Connect.ConnectorShape() nil after reopen")
+		}
+	}
+}

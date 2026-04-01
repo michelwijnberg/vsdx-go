@@ -2,6 +2,7 @@ package vsdx
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/beevik/etree"
@@ -116,6 +117,50 @@ func (g *Geometry) SetMoveTo(x, y float64, moveToIndex int) {
 // SetLineTo sets the coordinates of a LineTo row at the given index (0-based).
 func (g *Geometry) SetLineTo(x, y float64, lineToIndex int) {
 	g.setRowCoords("lineto", x, y, lineToIndex)
+}
+
+// nextIX returns the next available IX value for a new row.
+func (g *Geometry) nextIX() string {
+	maxIX := 0
+	for k := range g.Rows {
+		if ix, err := strconv.Atoi(k); err == nil && ix > maxIX {
+			maxIX = ix
+		}
+	}
+	return strconv.Itoa(maxIX + 1)
+}
+
+// addRow creates a new geometry row with X and Y cells.
+func (g *Geometry) addRow(rowType string, x, y float64) {
+	ix := g.nextIX()
+	addGeoRowXML(g.xml, rowType, ix, fmtFloat(x), fmtFloat(y))
+	rowElem := g.xml.SelectElements("Row")
+	last := rowElem[len(rowElem)-1]
+	g.Rows[ix] = newGeometryRow(g, last, nil)
+}
+
+// AddMoveTo adds a MoveTo row with absolute coordinates.
+func (g *Geometry) AddMoveTo(x, y float64) { g.addRow("MoveTo", x, y) }
+
+// AddLineTo adds a LineTo row with absolute coordinates.
+func (g *Geometry) AddLineTo(x, y float64) { g.addRow("LineTo", x, y) }
+
+// AddRelMoveTo adds a RelMoveTo row with coordinates relative to shape bounds (0-1 range).
+func (g *Geometry) AddRelMoveTo(x, y float64) { g.addRow("RelMoveTo", x, y) }
+
+// AddRelLineTo adds a RelLineTo row with coordinates relative to shape bounds (0-1 range).
+func (g *Geometry) AddRelLineTo(x, y float64) { g.addRow("RelLineTo", x, y) }
+
+// AddArcTo adds an ArcTo row with absolute coordinates and bow (arc bulge).
+func (g *Geometry) AddArcTo(x, y, bow float64) {
+	ix := g.nextIX()
+	row := g.xml.CreateElement("Row")
+	row.CreateAttr("T", "ArcTo")
+	row.CreateAttr("IX", ix)
+	addCellXML(row, "X", fmtFloat(x), "")
+	addCellXML(row, "Y", fmtFloat(y), "")
+	addCellXML(row, "A", fmtFloat(bow), "")
+	g.Rows[ix] = newGeometryRow(g, row, nil)
 }
 
 // GeometryRow represents a row within a Geometry section.
