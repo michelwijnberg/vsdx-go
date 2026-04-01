@@ -3448,6 +3448,84 @@ func TestGeometryBuilders(t *testing.T) {
 	}
 }
 
+func TestAddEllipse(t *testing.T) {
+	vis, _, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	s := shapes[0]
+	g := s.AddGeometry()
+
+	// Ellipse: center (1,1), right (2,1), top (1,2)
+	g.AddEllipse(1, 1, 2, 1, 1, 2)
+
+	if len(g.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(g.Rows))
+	}
+
+	row := g.Rows["1"]
+	if row == nil {
+		t.Fatal("Ellipse row not found")
+	}
+	if row.RowType() != "Ellipse" {
+		t.Errorf("row type = %q, want Ellipse", row.RowType())
+	}
+
+	// Check all 6 cells (X, Y, A, B, C, D)
+	for _, name := range []string{"X", "Y", "A", "B", "C", "D"} {
+		if _, ok := row.Cells[name]; !ok {
+			t.Errorf("Ellipse should have %s cell", name)
+		}
+	}
+
+	// Round-trip
+	data, err := vis.SaveVsdxBytes()
+	if err != nil {
+		t.Fatalf("SaveVsdxBytes: %v", err)
+	}
+	vis2, err := OpenBytes(data)
+	if err != nil {
+		t.Fatalf("OpenBytes: %v", err)
+	}
+	defer vis2.Close() //nolint:errcheck
+
+	found := vis2.GetPage(0).FindShapeByText("router-1")
+	if found == nil {
+		t.Fatal("shape not found after reopen")
+	}
+	if len(found.Geometries) == 0 {
+		t.Error("geometry lost after round-trip")
+	}
+}
+
+func TestAddEllipticalArcTo(t *testing.T) {
+	vis, _, shapes := buildNetworkTopology(t)
+	defer vis.Close() //nolint:errcheck
+
+	s := shapes[0]
+	g := s.AddGeometry()
+
+	g.AddMoveTo(0, 0)
+	g.AddEllipticalArcTo(2, 0, 1, 0.5, 1.5, 0)
+
+	if len(g.Rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(g.Rows))
+	}
+
+	row := g.Rows["2"]
+	if row == nil {
+		t.Fatal("EllipticalArcTo row not found")
+	}
+	if row.RowType() != "EllipticalArcTo" {
+		t.Errorf("row type = %q, want EllipticalArcTo", row.RowType())
+	}
+	// Should have 6 cells
+	for _, name := range []string{"X", "Y", "A", "B", "C", "D"} {
+		if _, ok := row.Cells[name]; !ok {
+			t.Errorf("EllipticalArcTo should have %s cell", name)
+		}
+	}
+}
+
 func TestAddHyperlink(t *testing.T) {
 	vis, _, shapes := buildNetworkTopology(t)
 	defer vis.Close() //nolint:errcheck

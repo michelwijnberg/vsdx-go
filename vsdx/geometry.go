@@ -163,6 +163,40 @@ func (g *Geometry) AddArcTo(x, y, bow float64) {
 	g.Rows[ix] = newGeometryRow(g, row, nil)
 }
 
+// AddEllipse adds an Ellipse row defining an ellipse by its center and two control points.
+// (x, y) is the center, (a, b) is a point on the ellipse along the major axis,
+// (c, d) is a point on the ellipse along the minor axis.
+func (g *Geometry) AddEllipse(x, y, a, b, c, d float64) {
+	ix := g.nextIX()
+	row := g.xml.CreateElement("Row")
+	row.CreateAttr("T", "Ellipse")
+	row.CreateAttr("IX", ix)
+	addCellXML(row, "X", fmtFloat(x), "")
+	addCellXML(row, "Y", fmtFloat(y), "")
+	addCellXML(row, "A", fmtFloat(a), "")
+	addCellXML(row, "B", fmtFloat(b), "")
+	addCellXML(row, "C", fmtFloat(c), "")
+	addCellXML(row, "D", fmtFloat(d), "")
+	g.Rows[ix] = newGeometryRow(g, row, nil)
+}
+
+// AddEllipticalArcTo adds an EllipticalArcTo row.
+// (x, y) is the endpoint, a is the control point X, b is the control point Y,
+// c is the major/minor ratio, d is the angle of the major axis.
+func (g *Geometry) AddEllipticalArcTo(x, y, a, b, c, d float64) {
+	ix := g.nextIX()
+	row := g.xml.CreateElement("Row")
+	row.CreateAttr("T", "EllipticalArcTo")
+	row.CreateAttr("IX", ix)
+	addCellXML(row, "X", fmtFloat(x), "")
+	addCellXML(row, "Y", fmtFloat(y), "")
+	addCellXML(row, "A", fmtFloat(a), "")
+	addCellXML(row, "B", fmtFloat(b), "")
+	addCellXML(row, "C", fmtFloat(c), "")
+	addCellXML(row, "D", fmtFloat(d), "")
+	g.Rows[ix] = newGeometryRow(g, row, nil)
+}
+
 // GeometryRow represents a row within a Geometry section.
 // Each row has a type (T attribute) and index (IX attribute), and contains Cell elements.
 type GeometryRow struct {
