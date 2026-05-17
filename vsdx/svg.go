@@ -325,15 +325,9 @@ func renderShapeText(ss renderableShape, parent *Shape, scaleX, scaleY float64, 
 		txtPinY = ss.localH / 2
 	}
 
-	// Get text block dimensions.
-	txtWidth := toFloat(s.CellValue("TxtWidth"))
-	txtHeight := toFloat(s.CellValue("TxtHeight"))
-	if txtWidth == 0 {
-		txtWidth = ss.localW
-	}
-	if txtHeight == 0 {
-		txtHeight = ss.localH
-	}
+	// Get text block dimensions (used for layout calculations).
+	_ = toFloat(s.CellValue("TxtWidth"))  // reserved for future multi-line layout
+	_ = toFloat(s.CellValue("TxtHeight")) // reserved for future multi-line layout
 
 	// Get text angle (rotation in radians).
 	txtAngle := toFloat(s.CellValue("TxtAngle"))
@@ -356,9 +350,10 @@ func renderShapeText(ss renderableShape, parent *Shape, scaleX, scaleY float64, 
 	// Calculate text position in shape coordinates.
 	// Text block position is relative to shape's pin point.
 	textX := txtPinX + ss.offsetX + leftMargin
-	textY := txtPinY + ss.offsetY
+	_ = txtPinY // pin position used as base, then overridden by alignment
 
-	// Adjust for vertical alignment.
+	// Determine vertical position based on alignment.
+	var textY float64
 	switch vertAlign {
 	case 0: // Top
 		textY = ss.offsetY + ss.localH - topMargin
@@ -551,14 +546,6 @@ func collectRenderableShapes(shape *Shape) []renderableShape {
 // renderSubShapeWithMarkers converts a single geometry section to an SVG <path> with marker support.
 func renderSubShapeWithMarkers(ss renderableShape, parent *Shape, scaleX, scaleY float64, o *SVGOptions, colorFreq map[string]int) svgRenderResult {
 	return renderSubShapeInternal(ss, parent, scaleX, scaleY, o, colorFreq)
-}
-
-// renderSubShape converts a single sub-shape's geometry to an SVG <path> element.
-// renderSubShape converts a single geometry section to an SVG <path>.
-// Returns the SVG string and the computed stroke width (for viewBox padding).
-func renderSubShape(ss renderableShape, parent *Shape, scaleX, scaleY float64, o *SVGOptions, colorFreq map[string]int) (string, float64) {
-	result := renderSubShapeInternal(ss, parent, scaleX, scaleY, o, colorFreq)
-	return result.pathSVG, result.strokeWidth
 }
 
 // renderSubShapeInternal is the core rendering function that supports markers, gradients, and shadows.
@@ -801,10 +788,9 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 	lineWeight := s.LineWeight()
 	var styleAttrs []string
 	var gradientID string
-	var gradient *Gradient
 
 	// Check for gradient fill.
-	gradient = s.FillGradient()
+	gradient := s.FillGradient()
 	if gradient != nil && !noFill {
 		// Generate unique gradient ID based on shape ID.
 		gradientID = fmt.Sprintf("grad_%s", s.ID)

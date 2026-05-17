@@ -38,7 +38,7 @@ type VisioFile struct {
 	mastersXML      *etree.Element // root element of masters.xml
 	masterIndex     map[string]*Page
 	cachedMedia     *Media
-	debug           bool //nolint:unused // reserved for future debug logging
+	// debug field removed - use ParseOptions.ErrorHandler for debugging
 }
 
 // IsStencil returns true if this file is a stencil (.vssx/.vssm) with master shapes but no pages.
