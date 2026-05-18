@@ -5604,11 +5604,6 @@ func TestFormulaEvalResultUnsupported(t *testing.T) {
 		formula  string
 		funcName string
 	}{
-		// Geometry path functions (MS-VSDX §2.4.2)
-		{"POINTALONGPATH(1)", "POINTALONGPATH"},
-		{"PATHLENGTH()", "PATHLENGTH"},
-		{"ANGLEALONGPATH(0.5)", "ANGLEALONGPATH"},
-
 		// Layout functions (MS-VSDX §2.2.5.2.51)
 		{"GRAVITY(1,2,3)", "GRAVITY"},
 
@@ -7309,5 +7304,74 @@ func TestFormulaNewMSVSDXFunctions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGeometryPathFunctions(t *testing.T) {
+	vis, err := Open("../tests/test1.vsdx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vis.Close()
+
+	shapes := vis.Pages[0].AllShapes()
+	if len(shapes) == 0 {
+		t.Fatal("no shapes")
+	}
+
+	// Find a shape with geometry
+	var shape *Shape
+	for _, s := range shapes {
+		if s.Geometry != nil && len(s.Geometry.Rows) > 0 {
+			shape = s
+			break
+		}
+	}
+	if shape == nil {
+		t.Skip("no shape with geometry found")
+	}
+
+	// Test Geometry.PathLength
+	length := shape.Geometry.PathLength()
+	if length < 0 {
+		t.Errorf("PathLength() = %v, expected non-negative", length)
+	}
+	t.Logf("PathLength = %v", length)
+
+	// Test Geometry.PointAlongPath
+	x, y := shape.Geometry.PointAlongPath(0.5, 0)
+	t.Logf("PointAlongPath(0.5, 0) = (%v, %v)", x, y)
+
+	// Test Geometry.AngleAlongPath
+	angle := shape.Geometry.AngleAlongPath(0.5)
+	t.Logf("AngleAlongPath(0.5) = %v", angle)
+
+	// Test via FormulaEvaluator
+	eval := NewFormulaEvaluator(shape)
+
+	// PATHLENGTH should return the geometry length
+	pathLen, ok := eval.Eval("PATHLENGTH(Geometry1)")
+	if !ok {
+		t.Error("PATHLENGTH(Geometry1) failed")
+	} else {
+		if math.Abs(pathLen-length) > 0.0001 {
+			t.Errorf("PATHLENGTH formula = %v, Geometry.PathLength() = %v", pathLen, length)
+		}
+	}
+
+	// ANGLEALONGPATH should return an angle
+	angleVal, ok := eval.Eval("ANGLEALONGPATH(Geometry1, 0.5)")
+	if !ok {
+		t.Error("ANGLEALONGPATH(Geometry1, 0.5) failed")
+	} else {
+		t.Logf("ANGLEALONGPATH formula = %v", angleVal)
+	}
+
+	// POINTALONGPATH should return x coordinate
+	pointX, ok := eval.Eval("POINTALONGPATH(Geometry1, 0.5)")
+	if !ok {
+		t.Error("POINTALONGPATH(Geometry1, 0.5) failed")
+	} else {
+		t.Logf("POINTALONGPATH formula X = %v", pointX)
 	}
 }

@@ -1,6 +1,7 @@
 package vsdx
 
 import (
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -540,4 +541,323 @@ func (c *GeometryCell) CreateCellXML(name string) *etree.Element {
 	}
 	c.xml = cell
 	return cell
+}
+
+// pathSegment represents a segment in a geometry path for length/position calculations.
+type pathSegment struct {
+	startX, startY float64 // start point
+	endX, endY     float64 // end point
+	length         float64 // segment length
+	rowType        string  // MoveTo, LineTo, ArcTo, etc.
+	bow            float64 // for ArcTo: arc bulge
+}
+
+// SortedRows returns the geometry rows sorted by IX (index) attribute.
+func (g *Geometry) SortedRows() []*GeometryRow {
+	// Collect all indices
+	indices := make([]string, 0, len(g.Rows))
+	for ix := range g.Rows {
+		indices = append(indices, ix)
+	}
+	sort.Strings(indices)
+
+	// Return rows in sorted order
+	rows := make([]*GeometryRow, 0, len(indices))
+	for _, ix := range indices {
+		rows = append(rows, g.Rows[ix])
+	}
+	return rows
+}
+
+// buildPathSegments constructs the path segments from geometry rows.
+func (g *Geometry) buildPathSegments() []pathSegment {
+	rows := g.SortedRows()
+	if len(rows) == 0 {
+		return nil
+	}
+
+	segments := make([]pathSegment, 0, len(rows))
+	var curX, curY float64
+
+	// Get shape dimensions for relative coordinates
+	var width, height float64 = 1, 1
+	if g.shape != nil {
+		width = g.shape.Width()
+		height = g.shape.Height()
+		if width == 0 {
+			width = 1
+		}
+		if height == 0 {
+			height = 1
+		}
+	}
+
+	for _, row := range rows {
+		rt := strings.ToLower(row.RowType())
+		x, y := row.X(), row.Y()
+
+		switch rt {
+		case "moveto":
+			curX, curY = x, y
+		case "relmoveto":
+			curX, curY = x*width, y*height
+		case "lineto":
+			length := math.Hypot(x-curX, y-curY)
+			segments = append(segments, pathSegment{
+				startX: curX, startY: curY,
+				endX: x, endY: y,
+				length:  length,
+				rowType: "LineTo",
+			})
+			curX, curY = x, y
+		case "rellineto":
+			absX, absY := x*width, y*height
+			length := math.Hypot(absX-curX, absY-curY)
+			segments = append(segments, pathSegment{
+				startX: curX, startY: curY,
+				endX: absX, endY: absY,
+				length:  length,
+				rowType: "RelLineTo",
+			})
+			curX, curY = absX, absY
+		case "arcto":
+			// ArcTo has a bow (A cell) that defines arc bulge
+			bow := 0.0
+			if aCell := row.Cells["A"]; aCell != nil {
+				bow = toFloat(aCell.Value())
+			}
+			// Arc length approximation: chord length * factor based on bow
+			chord := math.Hypot(x-curX, y-curY)
+			arcLen := chord
+			if bow != 0 && chord > 0 {
+				// Arc length = 2 * radius * arcsin(chord / (2 * radius))
+				// where radius = (chord^2 + 4*bow^2) / (8*|bow|)
+				radius := (chord*chord + 4*bow*bow) / (8 * math.Abs(bow))
+				if radius > 0 {
+					halfChord := chord / 2
+					if halfChord <= radius {
+						arcLen = 2 * radius * math.Asin(halfChord/radius)
+					}
+				}
+			}
+			segments = append(segments, pathSegment{
+				startX: curX, startY: curY,
+				endX: x, endY: y,
+				length:  arcLen,
+				rowType: "ArcTo",
+				bow:     bow,
+			})
+			curX, curY = x, y
+		case "ellipticalarctoc", "relellipticalarctoc":
+			// Simplified: use chord length as approximation
+			absX, absY := x, y
+			if rt == "relellipticalarctoc" {
+				absX, absY = x*width, y*height
+			}
+			length := math.Hypot(absX-curX, absY-curY)
+			segments = append(segments, pathSegment{
+				startX: curX, startY: curY,
+				endX: absX, endY: absY,
+				length:  length,
+				rowType: rt,
+			})
+			curX, curY = absX, absY
+		case "relcubbezto", "relquadbezto", "nurbsto", "polylineto", "splinestart", "splineknot":
+			// Simplified: use chord length as approximation for curves
+			absX, absY := x, y
+			if strings.HasPrefix(rt, "rel") {
+				absX, absY = x*width, y*height
+			}
+			length := math.Hypot(absX-curX, absY-curY)
+			segments = append(segments, pathSegment{
+				startX: curX, startY: curY,
+				endX: absX, endY: absY,
+				length:  length,
+				rowType: rt,
+			})
+			curX, curY = absX, absY
+		}
+	}
+	return segments
+}
+
+// PathLength returns the total length of the geometry path.
+func (g *Geometry) PathLength() float64 {
+	segments := g.buildPathSegments()
+	total := 0.0
+	for _, seg := range segments {
+		total += seg.length
+	}
+	return total
+}
+
+// PointAlongPath returns the (x, y) coordinates at a given travel fraction (0-1) along the path.
+// offset specifies a perpendicular offset from the path.
+func (g *Geometry) PointAlongPath(travel, offset float64) (x, y float64) {
+	segments := g.buildPathSegments()
+	if len(segments) == 0 {
+		return 0, 0
+	}
+
+	totalLen := 0.0
+	for _, seg := range segments {
+		totalLen += seg.length
+	}
+	if totalLen == 0 {
+		return segments[0].startX, segments[0].startY
+	}
+
+	targetDist := travel * totalLen
+	cumDist := 0.0
+
+	for _, seg := range segments {
+		if cumDist+seg.length >= targetDist || &seg == &segments[len(segments)-1] {
+			// Point is in this segment
+			if seg.length == 0 {
+				x, y = seg.startX, seg.startY
+			} else {
+				t := (targetDist - cumDist) / seg.length
+				if t < 0 {
+					t = 0
+				}
+				if t > 1 {
+					t = 1
+				}
+
+				if seg.rowType == "ArcTo" && seg.bow != 0 {
+					// Arc interpolation
+					x, y = interpolateArc(seg.startX, seg.startY, seg.endX, seg.endY, seg.bow, t)
+				} else {
+					// Linear interpolation
+					x = seg.startX + t*(seg.endX-seg.startX)
+					y = seg.startY + t*(seg.endY-seg.startY)
+				}
+			}
+
+			// Apply perpendicular offset
+			if offset != 0 {
+				angle := math.Atan2(seg.endY-seg.startY, seg.endX-seg.startX)
+				perpAngle := angle + math.Pi/2
+				x += offset * math.Cos(perpAngle)
+				y += offset * math.Sin(perpAngle)
+			}
+			return x, y
+		}
+		cumDist += seg.length
+	}
+
+	// Return end point
+	last := segments[len(segments)-1]
+	return last.endX, last.endY
+}
+
+// AngleAlongPath returns the angle (in radians) of the path tangent at a given travel fraction (0-1).
+func (g *Geometry) AngleAlongPath(travel float64) float64 {
+	segments := g.buildPathSegments()
+	if len(segments) == 0 {
+		return 0
+	}
+
+	totalLen := 0.0
+	for _, seg := range segments {
+		totalLen += seg.length
+	}
+	if totalLen == 0 {
+		return 0
+	}
+
+	targetDist := travel * totalLen
+	cumDist := 0.0
+
+	for _, seg := range segments {
+		if cumDist+seg.length >= targetDist || &seg == &segments[len(segments)-1] {
+			// Angle in this segment
+			if seg.rowType == "ArcTo" && seg.bow != 0 {
+				// Arc tangent angle at position t
+				t := 0.5
+				if seg.length > 0 {
+					t = (targetDist - cumDist) / seg.length
+				}
+				return arcTangentAngle(seg.startX, seg.startY, seg.endX, seg.endY, seg.bow, t)
+			}
+			// Linear segment tangent
+			return math.Atan2(seg.endY-seg.startY, seg.endX-seg.startX)
+		}
+		cumDist += seg.length
+	}
+
+	// Return angle of last segment
+	last := segments[len(segments)-1]
+	return math.Atan2(last.endY-last.startY, last.endX-last.startX)
+}
+
+// interpolateArc returns the point at parameter t (0-1) along an arc defined by endpoints and bow.
+func interpolateArc(x1, y1, x2, y2, bow, t float64) (float64, float64) {
+	if bow == 0 {
+		return x1 + t*(x2-x1), y1 + t*(y2-y1)
+	}
+
+	// Calculate arc center and radius
+	midX, midY := (x1+x2)/2, (y1+y2)/2
+	chord := math.Hypot(x2-x1, y2-y1)
+	if chord == 0 {
+		return x1, y1
+	}
+
+	// Perpendicular direction from midpoint
+	perpX := -(y2 - y1) / chord
+	perpY := (x2 - x1) / chord
+
+	// Sagitta (distance from chord midpoint to arc)
+	// bow is the sagitta value
+	radius := (chord*chord + 4*bow*bow) / (8 * math.Abs(bow))
+
+	// Center is on perpendicular from midpoint
+	dist := radius - math.Abs(bow)
+	if bow > 0 {
+		dist = -dist
+	}
+	centerX := midX + dist*perpX
+	centerY := midY + dist*perpY
+
+	// Angles from center to start and end points
+	startAngle := math.Atan2(y1-centerY, x1-centerX)
+	endAngle := math.Atan2(y2-centerY, x2-centerX)
+
+	// Handle angle wrapping for arc direction
+	if bow > 0 {
+		if endAngle > startAngle {
+			endAngle -= 2 * math.Pi
+		}
+	} else {
+		if endAngle < startAngle {
+			endAngle += 2 * math.Pi
+		}
+	}
+
+	// Interpolate angle
+	angle := startAngle + t*(endAngle-startAngle)
+	return centerX + radius*math.Cos(angle), centerY + radius*math.Sin(angle)
+}
+
+// arcTangentAngle returns the tangent angle at parameter t along an arc.
+func arcTangentAngle(x1, y1, x2, y2, bow, t float64) float64 {
+	if bow == 0 {
+		return math.Atan2(y2-y1, x2-x1)
+	}
+
+	// Get point slightly before and after t to compute tangent
+	dt := 0.001
+	t1, t2 := t-dt, t+dt
+	if t1 < 0 {
+		t1 = 0
+	}
+	if t2 > 1 {
+		t2 = 1
+	}
+
+	px1, py1 := interpolateArc(x1, y1, x2, y2, bow, t1)
+	px2, py2 := interpolateArc(x1, y1, x2, y2, bow, t2)
+
+	return math.Atan2(py2-py1, px2-px1)
 }

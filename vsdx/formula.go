@@ -56,7 +56,8 @@ func (r FormulaResult) String() string {
 
 // FormulaEvaluator evaluates Visio formulas in the context of a shape.
 type FormulaEvaluator struct {
-	shape *Shape
+	shape      *Shape
+	lastPointY float64 // Y coordinate from last POINTALONGPATH for PNTY retrieval
 }
 
 // NewFormulaEvaluator creates a new evaluator for the given shape.
@@ -773,11 +774,56 @@ func (e *FormulaEvaluator) evalFunc(name, argsStr string) (float64, bool) {
 			}
 		}
 
-	// Geometry functions - UNSUPPORTED: require geometry path parsing (MS-VSDX §2.4.2)
-	case "POINTALONGPATH", "PATHLENGTH", "ANGLEALONGPATH":
-		// These functions require parsing and computing along geometry paths.
-		// Returning false to indicate unsupported - caller should check via EvalResult.
-		return 0, false
+	// Geometry path functions (MS-VSDX §2.4.2)
+	case "PATHLENGTH":
+		// PATHLENGTH(section [, segment])
+		if e.shape == nil {
+			return 0, false
+		}
+		geom := e.shape.Geometry
+		if geom == nil {
+			return 0, true // No geometry = zero length
+		}
+		return geom.PathLength(), true
+
+	case "POINTALONGPATH":
+		// POINTALONGPATH(section, travel [, offset [, segment]])
+		// Returns a packed point value (x in high bits, y in low bits for compatibility)
+		if e.shape == nil || len(args) < 2 {
+			return 0, false
+		}
+		geom := e.shape.Geometry
+		if geom == nil {
+			return 0, true
+		}
+		travel, tok := e.evalExpr(args[1])
+		if !tok {
+			return 0, false
+		}
+		offset := 0.0
+		if len(args) >= 3 {
+			offset, _ = e.evalExpr(args[2])
+		}
+		x, y := geom.PointAlongPath(travel, offset)
+		// Pack as point: return X coordinate (use PNTX/PNTY to extract)
+		// Store Y in evaluator context for PNTY retrieval
+		e.lastPointY = y
+		return x, true
+
+	case "ANGLEALONGPATH":
+		// ANGLEALONGPATH(section, travel [, segment])
+		if e.shape == nil || len(args) < 2 {
+			return 0, false
+		}
+		geom := e.shape.Geometry
+		if geom == nil {
+			return 0, true
+		}
+		travel, tok := e.evalExpr(args[1])
+		if !tok {
+			return 0, false
+		}
+		return geom.AngleAlongPath(travel), true
 
 	// Unit conversion
 	case "CY":
