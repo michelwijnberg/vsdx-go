@@ -11,4 +11,7 @@ const (
 	CorePropNS = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
 	DcNS       = "http://purl.org/dc/elements/1.1/"
 	DcTermsNS  = "http://purl.org/dc/terms/"
+
+	// Markup Compatibility namespace (MS-VSDX §2.2.10)
+	McCompatNS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 )

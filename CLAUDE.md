@@ -50,12 +50,13 @@ vsdx-go/
 │   │
 │   │── # Support
 │   ├── cellname.go             # CellName constants: 70+ cel definities incl. 3D/effects (141 lines)
+│   ├── compat.go               # Markup Compatibility: mc:AlternateContent, mc:Ignorable (200 lines)
 │   ├── errors.go               # Sentinel errors: ErrInvalidFileType, FileError (27 lines)
 │   ├── types.go                # Result structs: Point, Rect (27 lines)
-│   ├── namespace.go            # XML namespace constants (14 lines)
+│   ├── namespace.go            # XML namespace constants incl. McCompatNS (17 lines)
 │   ├── util.go                 # writeFile helper (15 lines)
 │   │
-│   ├── vsdx_test.go            # 350+ test cases (7313 lines)
+│   ├── vsdx_test.go            # 450+ test cases (7754 lines)
 │   ├── foreign_test.go         # 10 test cases (726 lines)
 │   └── svg_test.go             # 30+ test cases (671 lines)
 │
@@ -221,8 +222,8 @@ cd /home/michel/vsdx-go && go test ./vsdx/... -run TestName -v
 
 ## Huidige Status
 
-- 34 Go source bestanden, ~15,200 lines code + ~9,000 lines tests = ~24,200 total
-- 452 test cases (alle passing), ~90% code coverage
+- 35 Go source bestanden, ~15,900 lines code + ~9,200 lines tests = ~25,100 total
+- 460 test cases (alle passing), ~90% code coverage
 - **100% MS-VSDX spec coverage** (21 secties + 175 formule functies + volledige style/theme support)
 - Alle fasen compleet: lezen, navigatie, bewerken, schrijven, connectors, templating, diff
 - **Rendering features**: SVG met line patterns (24 types), arrow markers (45+ types), 
@@ -237,6 +238,8 @@ cd /home/michel/vsdx-go && go test ./vsdx/... -run TestName -v
   ReflectionEffect (4 cells), SketchEffect (6 cells), Rotation3DEffect (7 cells), SoftEdgesSize
 - **QuickStyle slices** (MS-VSDX §2.2.7.4.3): alle 7 slices (LineMatrix, FillMatrix, EffectsMatrix,
   FontMatrix, LineColor, FillColor, ShadowColor) + FontColor, Type, Variation
+- **Markup Compatibility** (MS-VSDX §2.2.10): mc:AlternateContent, mc:Ignorable, mc:Fallback
+- **String formula functions**: LOWER, UPPER, TRIM, REPLACE, SUBSTITUTE, REPT, CONCATENATE
 - Netwerk-diagram features: character/paragraph formatting, fill transparency, line patterns,
   geometry builders, layers, hyperlinks, connection points, protection, user-defined cells
 - Idiomatisch Go: cell constants, sentinel errors, typed interfaces, result structs

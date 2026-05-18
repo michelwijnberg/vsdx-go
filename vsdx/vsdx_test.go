@@ -5609,21 +5609,6 @@ func TestFormulaEvalResultUnsupported(t *testing.T) {
 
 		// Geometry intersection
 		{"RECTSECT(1,2,3,4,5)", "RECTSECT"},
-
-		// String manipulation functions
-		{"LOWER(\"TEST\")", "LOWER"},
-		{"UPPER(\"test\")", "UPPER"},
-		{"TRIM(\" test \")", "TRIM"},
-		{"REPLACE(\"a\",\"b\")", "REPLACE"},
-		{"SUBSTITUTE(\"a\",\"b\",\"c\")", "SUBSTITUTE"},
-		{"REPT(\"x\",3)", "REPT"},
-
-		// Date/time string parsing
-		{"TIMEVALUE(\"10:30\")", "TIMEVALUE"},
-		{"DATEVALUE(\"2024-01-01\")", "DATEVALUE"},
-
-		// Array functions
-		{"SUMPRODUCT(1,2,3)", "SUMPRODUCT"},
 	}
 
 	for _, tt := range unsupportedTests {
@@ -5663,6 +5648,60 @@ func TestFormulaEvalResultUnsupported(t *testing.T) {
 		if math.Abs(result.Value-tt.want) > 0.0001 {
 			t.Errorf("EvalResult(%q) = %v; want %v", tt.formula, result.Value, tt.want)
 		}
+	}
+}
+
+// TestFormulaEvalStringFunctions tests string manipulation functions.
+func TestFormulaEvalStringFunctions(t *testing.T) {
+	vis, err := Open("../tests/test1.vsdx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vis.Close()
+
+	shapes := vis.Pages[0].AllShapes()
+	if len(shapes) == 0 {
+		t.Fatal("no shapes")
+	}
+	shape := shapes[0]
+
+	eval := NewFormulaEvaluator(shape)
+
+	// Test string functions return success and set Str result
+	tests := []struct {
+		formula string
+		want    string
+	}{
+		{`LOWER("TEST")`, "test"},
+		{`UPPER("test")`, "TEST"},
+		{`TRIM("  hello  ")`, "hello"},
+		{`REPT("ab",3)`, "ababab"},
+		{`CONCATENATE("a","b","c")`, "abc"},
+		{`SUBSTITUTE("hello","l","x")`, "hexxo"},
+		{`REPLACE("hello",2,3,"XX")`, "hXXo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.formula, func(t *testing.T) {
+			result := eval.EvalResult(tt.formula)
+			if result.Status != FormulaSuccess {
+				t.Errorf("EvalResult(%q) status=%v; want FormulaSuccess", tt.formula, result.Status)
+				return
+			}
+			if result.Str != tt.want {
+				t.Errorf("EvalResult(%q).Str = %q; want %q", tt.formula, result.Str, tt.want)
+			}
+
+			// Also test EvalString
+			str, ok := eval.EvalString(tt.formula)
+			if !ok {
+				t.Errorf("EvalString(%q) returned ok=false; want ok=true", tt.formula)
+				return
+			}
+			if str != tt.want {
+				t.Errorf("EvalString(%q) = %q; want %q", tt.formula, str, tt.want)
+			}
+		})
 	}
 }
 
@@ -7645,5 +7684,71 @@ func TestSoftEdgesSize(t *testing.T) {
 	readBack := shape.SoftEdgesSize()
 	if readBack != 5.0 {
 		t.Errorf("SoftEdgesSize = %f, want 5.0", readBack)
+	}
+}
+
+// TestMarkupCompatibility tests processing of mc:AlternateContent elements.
+func TestMarkupCompatibility(t *testing.T) {
+	// Test with a document containing mc:AlternateContent
+	xmlStr := `<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
+  <mc:AlternateContent>
+    <mc:Choice Requires="unknown">
+      <unsupported>Should not appear</unsupported>
+    </mc:Choice>
+    <mc:Fallback>
+      <supported>This is the fallback content</supported>
+    </mc:Fallback>
+  </mc:AlternateContent>
+</root>`
+
+	doc := etree.NewDocument()
+	if err := doc.ReadFromString(xmlStr); err != nil {
+		t.Fatalf("Failed to parse XML: %v", err)
+	}
+
+	ProcessMarkupCompatibility(doc)
+
+	// The mc:AlternateContent should be replaced with fallback content
+	root := doc.Root()
+	if root == nil {
+		t.Fatal("Root is nil after processing")
+	}
+
+	// Check that unsupported is NOT present
+	unsupported := root.FindElement(".//unsupported")
+	if unsupported != nil {
+		t.Error("Unsupported element should not be present after processing")
+	}
+
+	// Check that supported IS present
+	supported := root.FindElement(".//supported")
+	if supported == nil {
+		t.Error("Supported fallback element should be present after processing")
+	} else {
+		text := supported.Text()
+		if text != "This is the fallback content" {
+			t.Errorf("Fallback text = %q; want %q", text, "This is the fallback content")
+		}
+	}
+}
+
+// TestGetIgnorableNamespaces tests extraction of mc:Ignorable prefixes.
+func TestGetIgnorableNamespaces(t *testing.T) {
+	xmlStr := `<?xml version="1.0" encoding="UTF-8"?>
+<root mc:Ignorable="v14 v15" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
+</root>`
+
+	doc := etree.NewDocument()
+	if err := doc.ReadFromString(xmlStr); err != nil {
+		t.Fatalf("Failed to parse XML: %v", err)
+	}
+
+	prefixes := GetIgnorableNamespaces(doc.Root())
+	if len(prefixes) != 2 {
+		t.Errorf("GetIgnorableNamespaces() returned %d prefixes; want 2", len(prefixes))
+	}
+	if len(prefixes) >= 2 && (prefixes[0] != "v14" || prefixes[1] != "v15") {
+		t.Errorf("GetIgnorableNamespaces() = %v; want [v14 v15]", prefixes)
 	}
 }

@@ -56,8 +56,9 @@ func (r FormulaResult) String() string {
 
 // FormulaEvaluator evaluates Visio formulas in the context of a shape.
 type FormulaEvaluator struct {
-	shape      *Shape
-	lastPointY float64 // Y coordinate from last POINTALONGPATH for PNTY retrieval
+	shape         *Shape
+	lastPointY    float64 // Y coordinate from last POINTALONGPATH for PNTY retrieval
+	lastStrResult string  // String result from last string function (LOWER, UPPER, etc.)
 }
 
 // NewFormulaEvaluator creates a new evaluator for the given shape.
@@ -75,11 +76,15 @@ func (e *FormulaEvaluator) Eval(formula string) (float64, bool) {
 
 // EvalResult evaluates a formula string and returns a detailed result.
 // Unlike Eval, this method distinguishes between evaluation failure and unsupported functions.
+// For string functions (LOWER, UPPER, TRIM, etc.), check result.Str for the string value.
 func (e *FormulaEvaluator) EvalResult(formula string) FormulaResult {
 	formula = strings.TrimSpace(formula)
 	if formula == "" {
 		return FormulaResult{Status: FormulaError, Err: ErrFormulaInvalidSyntax, Func: ""}
 	}
+
+	// Clear previous string result
+	e.lastStrResult = ""
 
 	// Try to parse as a simple number first
 	if v, err := strconv.ParseFloat(formula, 64); err == nil {
@@ -90,11 +95,31 @@ func (e *FormulaEvaluator) EvalResult(formula string) FormulaResult {
 	return e.evalExprResult(formula)
 }
 
+// EvalString evaluates a formula and returns the string result.
+// This is useful for string functions like LOWER, UPPER, CONCATENATE, etc.
+// Returns the string result and true if successful, or empty string and false on failure.
+func (e *FormulaEvaluator) EvalString(formula string) (string, bool) {
+	result := e.EvalResult(formula)
+	if result.Status == FormulaSuccess {
+		if e.lastStrResult != "" {
+			return e.lastStrResult, true
+		}
+		// For numeric results, convert to string
+		return fmtFloat(result.Value), true
+	}
+	return "", false
+}
+
 // evalExprResult evaluates an expression and returns detailed result.
 func (e *FormulaEvaluator) evalExprResult(expr string) FormulaResult {
 	result, ok := e.evalExpr(expr)
 	if ok {
-		return FormulaResult{Status: FormulaSuccess, Value: result}
+		r := FormulaResult{Status: FormulaSuccess, Value: result}
+		// Include string result if available
+		if e.lastStrResult != "" {
+			r.Str = e.lastStrResult
+		}
+		return r
 	}
 	// Check if this was an unsupported function by trying to parse it
 	if unsupported := e.checkUnsupportedFunc(expr); unsupported != "" {
@@ -118,42 +143,16 @@ func (e *FormulaEvaluator) checkUnsupportedFunc(expr string) string {
 }
 
 // isUnsupportedFunction returns true if the function is explicitly unsupported.
-// These functions are listed in MS-VSDX spec §2.2.11.2 but not fully implemented.
+// These functions are listed in MS-VSDX spec §2.2.11.2 but require runtime features
+// that cannot be implemented in a static evaluator.
 var unsupportedFunctions = map[string]bool{
-	// Geometry functions requiring path parsing (MS-VSDX §2.4.2)
-	"POINTALONGPATH": true,
-	"PATHLENGTH":     true,
-	"ANGLEALONGPATH": true,
-
-	// Layout/gravity functions (MS-VSDX §2.2.5.2.51)
+	// Layout/gravity functions (MS-VSDX §2.2.5.2.51) - require layout engine
 	"GRAVITY": true,
 
-	// Geometry intersection (MS-VSDX §2.2.11.2)
-	"RECTSECT":     true,
-	"POLYLINE":     true,
-	"ELLIPSE":      true,
-	"SPLINE":       true,
-	"NURBS":        true,
-	"INFINITELINE": true,
+	// Geometry intersection (MS-VSDX §2.2.11.2) - require geometric computation
+	"RECTSECT": true,
 
-	// String manipulation functions that return strings (MS-VSDX §2.2.11.2)
-	// These cannot be represented as float64
-	"LOWER":       true,
-	"UPPER":       true,
-	"TRIM":        true,
-	"REPLACE":     true,
-	"SUBSTITUTE":  true,
-	"REPT":        true,
-	"CONCATENATE": true,
-
-	// Date/time string parsing (MS-VSDX §2.2.11.2)
-	"TIMEVALUE": true,
-	"DATEVALUE": true,
-
-	// Array functions (MS-VSDX §2.2.11.2)
-	"SUMPRODUCT": true,
-
-	// Document/UI functions (MS-VSDX §2.2.11.2)
+	// Document/UI functions (MS-VSDX §2.2.11.2) - require runtime environment
 	"OPENFILE":         true,
 	"QUEUEMARKEREVENT": true,
 	"OPENTEXTWIN":      true,
@@ -1044,10 +1043,101 @@ func (e *FormulaEvaluator) evalFunc(name, argsStr string) (float64, bool) {
 			return 0, true
 		}
 
-	// String manipulation functions - UNSUPPORTED: return strings, not numeric values (MS-VSDX §2.2.11.2)
-	// FormulaEvaluator only supports numeric evaluation; string results cannot be represented.
-	case "LOWER", "UPPER", "TRIM", "REPLACE", "SUBSTITUTE", "REPT":
-		return 0, false
+	// String manipulation functions (MS-VSDX §2.2.11.2)
+	// These return 0 for numeric evaluation but set string result via EvalStringResult.
+	case "LOWER":
+		if len(args) >= 1 {
+			s := strings.Trim(strings.TrimSpace(args[0]), "\"'")
+			e.lastStrResult = strings.ToLower(s)
+			return 0, true
+		}
+	case "UPPER":
+		if len(args) >= 1 {
+			s := strings.Trim(strings.TrimSpace(args[0]), "\"'")
+			e.lastStrResult = strings.ToUpper(s)
+			return 0, true
+		}
+	case "TRIM":
+		if len(args) >= 1 {
+			s := strings.Trim(strings.TrimSpace(args[0]), "\"'")
+			e.lastStrResult = strings.TrimSpace(s)
+			return 0, true
+		}
+	case "REPLACE":
+		// REPLACE(SourceText, StartPos, NumChars, ReplaceText)
+		if len(args) >= 4 {
+			s := strings.Trim(strings.TrimSpace(args[0]), "\"'")
+			startPos, sok := e.evalExpr(args[1])
+			numChars, nok := e.evalExpr(args[2])
+			replaceText := strings.Trim(strings.TrimSpace(args[3]), "\"'")
+			if sok && nok {
+				start := int(startPos) - 1
+				end := start + int(numChars)
+				if start < 0 {
+					start = 0
+				}
+				if end > len(s) {
+					end = len(s)
+				}
+				if start <= len(s) {
+					e.lastStrResult = s[:start] + replaceText + s[end:]
+				} else {
+					e.lastStrResult = s + replaceText
+				}
+				return 0, true
+			}
+		}
+	case "SUBSTITUTE":
+		// SUBSTITUTE(Text, OldText, NewText [, Instance])
+		if len(args) >= 3 {
+			s := strings.Trim(strings.TrimSpace(args[0]), "\"'")
+			oldText := strings.Trim(strings.TrimSpace(args[1]), "\"'")
+			newText := strings.Trim(strings.TrimSpace(args[2]), "\"'")
+			if len(args) >= 4 {
+				instance, iok := e.evalExpr(args[3])
+				if iok && instance > 0 {
+					// Replace specific instance
+					n := int(instance)
+					idx := 0
+					for i := 0; i < n; i++ {
+						pos := strings.Index(s[idx:], oldText)
+						if pos < 0 {
+							e.lastStrResult = s
+							return 0, true
+						}
+						if i == n-1 {
+							e.lastStrResult = s[:idx+pos] + newText + s[idx+pos+len(oldText):]
+							return 0, true
+						}
+						idx += pos + len(oldText)
+					}
+				}
+			} else {
+				e.lastStrResult = strings.ReplaceAll(s, oldText, newText)
+			}
+			return 0, true
+		}
+	case "REPT":
+		// REPT(Text, Number)
+		if len(args) >= 2 {
+			s := strings.Trim(strings.TrimSpace(args[0]), "\"'")
+			count, cok := e.evalExpr(args[1])
+			if cok && count >= 0 {
+				e.lastStrResult = strings.Repeat(s, int(count))
+				return 0, true
+			}
+		}
+	case "CONCATENATE":
+		// CONCATENATE(Text1, Text2, ...)
+		if len(args) >= 1 {
+			var result strings.Builder
+			for _, arg := range args {
+				s := strings.Trim(strings.TrimSpace(arg), "\"'")
+				result.WriteString(s)
+			}
+			e.lastStrResult = result.String()
+			return 0, true
+		}
 
 	// CHAR - character from code
 	case "CHAR":
@@ -1874,8 +1964,8 @@ func (e *FormulaEvaluator) evalFunc(name, argsStr string) (float64, bool) {
 	case "SEGMENTCOUNT":
 		return 1, true
 
-	// CONCATENATE - string concatenation (limited support)
-	case "CONCATENATE", "CAT", "_CAT_":
+	// CAT - string concatenation aliases (limited support)
+	case "CAT", "_CAT_":
 		// Return 0 as we can't return strings, but mark as supported
 		return 0, true
 
