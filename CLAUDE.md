@@ -223,7 +223,7 @@ cd /home/michel/vsdx-go && go test ./vsdx/... -run TestName -v
 
 - 34 Go source bestanden, ~15,200 lines code + ~9,000 lines tests = ~24,200 total
 - 452 test cases (alle passing), ~90% code coverage
-- **100% MS-VSDX spec coverage** (21 secties + 172 formule functies + volledige style/theme support)
+- **100% MS-VSDX spec coverage** (21 secties + 175 formule functies + volledige style/theme support)
 - Alle fasen compleet: lezen, navigatie, bewerken, schrijven, connectors, templating, diff
 - **Rendering features**: SVG met line patterns (24 types), arrow markers (45+ types), 
   gradient fills (fill + line), drop shadows, text positioning, ellipse geometry
