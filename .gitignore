@@ -19,3 +19,6 @@
 # OS
 .DS_Store
 Thumbs.db
+# Generated SVG files (keep original .vsdx and Visio-exported .svg)
+vsdx-svg/*-generated.svg
+vsdx-svg/*-generated/

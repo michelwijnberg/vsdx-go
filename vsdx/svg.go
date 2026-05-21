@@ -129,10 +129,17 @@ func ShapeToSVG(shape *Shape, opts ...SVGOption) (*SVGResult, error) {
 	// Determine the bounding box in shape-local coordinates (inches).
 	shapeW := shape.Width()
 	shapeH := shape.Height()
-	if shapeW <= 0 {
+	// Track negative dimensions - connectors can have negative width/height
+	// indicating direction (left/up instead of right/down).
+	negativeWidth := shapeW < 0
+	negativeHeight := shapeH < 0
+	// Use absolute values for scaling
+	if shapeW < 0 {
+		shapeW = -shapeW
+	}
+	if shapeW == 0 {
 		shapeW = 1
 	}
-	// Use absolute value for negative heights (common in connectors going downward)
 	if shapeH < 0 {
 		shapeH = -shapeH
 	}
@@ -196,8 +203,16 @@ func ShapeToSVG(shape *Shape, opts ...SVGOption) (*SVGResult, error) {
 		arrowPad = maxStrokeWidth * 3 // arrows can extend ~3x stroke width
 	}
 	pad := maxStrokeWidth/2 + arrowPad
+	// For negative width/height shapes, the path extends in the negative direction.
+	// Adjust viewBox origin accordingly.
 	vbX := -pad
 	vbY := -pad
+	if negativeWidth {
+		vbX = -outW - pad
+	}
+	if negativeHeight {
+		vbY = -outH - pad
+	}
 	vbW := outW + 2*pad
 	vbH := outH + 2*pad
 
@@ -320,12 +335,13 @@ func generateMarkerSVG(m markerRef, precision int) string {
 		strokeAttr = "none"
 	}
 
-	// For arrows to point INTO shapes:
-	// - End marker: tip should point backward (opposite to path direction) into end shape
-	// - Start marker: tip should point forward (in path direction) into start shape
-	// With arrow tip at positive X: auto-start-reverse flips direction
+	// For arrows to point INTO the connected shapes:
+	// - Start marker: should point backward (into the shape where connector begins)
+	// - End marker: should point forward (into the shape where connector ends)
+	// With arrow tip at positive X and orient="auto", arrow points along path direction.
+	// Use auto-start-reverse at START to flip it backward into the start shape.
 	orient := "auto"
-	if m.isEnd {
+	if !m.isEnd {
 		orient = "auto-start-reverse"
 	}
 
@@ -818,6 +834,11 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 
 	// Sort geometry rows by IX.
 	sortedRows := sortGeometryRows(geom.Rows)
+	numRows := len(sortedRows)
+
+	// Check if shape has begin/end arrows - needed for direction-establishing LineTo stubs.
+	hasBeginArrow := int(toFloat(s.CellValue("BeginArrow"))) > 0
+	hasEndArrow := int(toFloat(s.CellValue("EndArrow"))) > 0
 
 	// Local coordinate transform that handles negative-height shapes correctly.
 	// For normal shapes: Y flips from bottom-up (Visio) to top-down (SVG).
@@ -836,9 +857,12 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 
 	// Build SVG path data.
 	var d strings.Builder
-	var prevX, prevY float64 // track current point in SVG space
+	var prevX, prevY float64   // track current point in SVG space
+	var startX, startY float64 // track path origin for direction calculation
+	needStartStub := false     // flag to add direction stub after MoveTo for begin arrows
 
-	for _, row := range sortedRows {
+	for rowIdx, row := range sortedRows {
+		isLastRow := rowIdx == numRows-1
 		rt := strings.ToLower(row.RowType())
 		switch rt {
 		case "moveto":
@@ -847,10 +871,14 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			svgX, svgY := localToSVG(sx+ss.offsetX, sy+ss.offsetY)
 			d.WriteString(fmt.Sprintf("M%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 			prevX, prevY = svgX, svgY
+			startX, startY = svgX, svgY
+			needStartStub = hasBeginArrow
 
 		case "lineto":
 			sx, sy := row.X(), row.Y()
 			svgX, svgY := localToSVG(sx+ss.offsetX, sy+ss.offsetY)
+			// For LineTo, the start stub (if any) IS the first line segment, so we just continue
+			needStartStub = false
 			d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 			prevX, prevY = svgX, svgY
 
@@ -861,13 +889,16 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			absY := ry*ss.localH + ss.offsetY
 			svgX, svgY := localToSVG(absX, absY)
 			d.WriteString(fmt.Sprintf("M%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
+			startX, startY = svgX, svgY
 			prevX, prevY = svgX, svgY
+			needStartStub = hasBeginArrow
 
 		case "rellineto":
 			rx, ry := row.X(), row.Y()
 			absX := rx*ss.localW + ss.offsetX
 			absY := ry*ss.localH + ss.offsetY
 			svgX, svgY := localToSVG(absX, absY)
+			needStartStub = false
 			d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 			prevX, prevY = svgX, svgY
 
@@ -946,6 +977,23 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			cp2Y := cellFloat(row, "D")*ss.localH + ss.offsetY
 			cp1SvgX, cp1SvgY := localToSVG(cp1X, cp1Y)
 			cp2SvgX, cp2SvgY := localToSVG(cp2X, cp2Y)
+			// Add direction-establishing LineTo stub at start if needed for begin arrow.
+			if needStartStub {
+				dx := cp1SvgX - prevX
+				dy := cp1SvgY - prevY
+				stubLen := math.Sqrt(dx*dx + dy*dy)
+				if stubLen > 0.01 {
+					ext := stubLen * 0.01
+					if ext < 0.1 {
+						ext = 0.1
+					}
+					stubX := prevX + (dx/stubLen)*ext
+					stubY := prevY + (dy/stubLen)*ext
+					d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(stubX, o.Precision), fmtPrec(stubY, o.Precision)))
+					prevX, prevY = stubX, stubY
+				}
+				needStartStub = false
+			}
 			d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
 				fmtPrec(cp1SvgX, o.Precision), fmtPrec(cp1SvgY, o.Precision),
 				fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
@@ -1033,6 +1081,38 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			eFormula := cellString(row, "E")
 			nurbsInfo := parseNURBSData(eFormula)
 
+			// Add direction-establishing LineTo stub at start if needed for begin arrow.
+			if needStartStub && nurbsInfo != nil && len(nurbsInfo.cps) > 0 {
+				// Stub goes from MoveTo point toward first control point.
+				var cp1AbsX, cp1AbsY float64
+				if nurbsInfo.xType == 0 {
+					cp1AbsX = nurbsInfo.cps[0].x*ss.localW + ss.offsetX
+				} else {
+					cp1AbsX = nurbsInfo.cps[0].x + ss.offsetX
+				}
+				if nurbsInfo.yType == 0 {
+					cp1AbsY = nurbsInfo.cps[0].y*ss.localH + ss.offsetY
+				} else {
+					cp1AbsY = nurbsInfo.cps[0].y + ss.offsetY
+				}
+				cp1SvgX, cp1SvgY := localToSVG(cp1AbsX, cp1AbsY)
+				dx := cp1SvgX - prevX
+				dy := cp1SvgY - prevY
+				stubLen := math.Sqrt(dx*dx + dy*dy)
+				if stubLen > 0.01 {
+					// Add a small stub (1% of distance to first CP, min 0.1 SVG units)
+					ext := stubLen * 0.01
+					if ext < 0.1 {
+						ext = 0.1
+					}
+					stubX := prevX + (dx/stubLen)*ext
+					stubY := prevY + (dy/stubLen)*ext
+					d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(stubX, o.Precision), fmtPrec(stubY, o.Precision)))
+					prevX, prevY = stubX, stubY
+				}
+				needStartStub = false
+			}
+
 			if nurbsInfo != nil && len(nurbsInfo.cps) == 2 {
 				// Degree 3, 2 interior control points → cubic Bezier.
 				// xType/yType: 0 = proportional (0-1), 1 = absolute (inches)
@@ -1074,10 +1154,89 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 					}
 				}
 
-				// For 4 control points (common S-curve): use two cubic Beziers
-				// First half: start to midpoint using cp0, cp1
-				// Second half: midpoint to end using cp2, cp3
-				if len(absPoints) == 4 {
+				// Check if control points form an L-shape (degenerate case).
+				// This happens when dynamic connectors store simplified geometry.
+				// Detect by checking if all X coords are equal OR all Y coords are equal
+				// for contiguous subsets of points.
+				isLShaped := false
+				if len(absPoints) == 3 {
+					// Check for L-shape: first two points same X, last two points same Y (or vice versa)
+					eps := 0.001
+					sameX01 := math.Abs(absPoints[0][0]-absPoints[1][0]) < eps
+					sameY12 := math.Abs(absPoints[1][1]-absPoints[2][1]) < eps
+					sameY01 := math.Abs(absPoints[0][1]-absPoints[1][1]) < eps
+					sameX12 := math.Abs(absPoints[1][0]-absPoints[2][0]) < eps
+					isLShaped = (sameX01 && sameY12) || (sameY01 && sameX12)
+				}
+
+				if isLShaped {
+					// Generate smooth S-curve for L-shaped control points.
+					// L-shaped connectors have control points forming a right angle.
+					// Like Visio, we use TWO cubic bezier segments for a smooth S-curve.
+					startX, startY := ss.offsetX, ss.offsetY // MoveTo origin
+					endX, endY := (sx + ss.offsetX), (sy + ss.offsetY)
+
+					// Determine the L-shape type based on control points:
+					// Type 1: Down then right (sameX01 && sameY12)
+					// Type 2: Right then down (sameY01 && sameX12)
+					eps := 0.001
+					sameX01 := math.Abs(absPoints[0][0]-absPoints[1][0]) < eps
+
+					// Calculate the corner point (where the L bends)
+					cornerX, cornerY := absPoints[1][0], absPoints[1][1]
+
+					// Midpoint for the S-curve transition
+					midX := (startX + endX) / 2
+					midY := (startY + endY) / 2
+
+					// For S-curve, we use the corner position to determine curve direction
+					var cp1X, cp1Y, cp2X, cp2Y, cp3X, cp3Y, cp4X, cp4Y float64
+					if sameX01 {
+						// L goes vertically first (down), then horizontally (right)
+						// First bezier: start → mid, curving toward corner
+						cp1X = startX
+						cp1Y = startY + (cornerY-startY)*0.5
+						cp2X = startX + (midX-startX)*0.2
+						cp2Y = midY
+						// Second bezier: mid → end, curving away from corner
+						cp3X = endX - (endX-midX)*0.2
+						cp3Y = midY
+						cp4X = endX
+						cp4Y = endY - (endY-cornerY)*0.5
+					} else {
+						// L goes horizontally first (right), then vertically (down)
+						// First bezier: start → mid, curving toward corner
+						cp1X = startX + (cornerX-startX)*0.5
+						cp1Y = startY
+						cp2X = midX
+						cp2Y = startY + (midY-startY)*0.2
+						// Second bezier: mid → end, curving away from corner
+						cp3X = midX
+						cp3Y = endY - (endY-midY)*0.2
+						cp4X = endX - (endX-cornerX)*0.5
+						cp4Y = endY
+					}
+
+					// First bezier: start to midpoint
+					cp1SvgX, cp1SvgY := localToSVG(cp1X, cp1Y)
+					cp2SvgX, cp2SvgY := localToSVG(cp2X, cp2Y)
+					midSvgX, midSvgY := localToSVG(midX, midY)
+					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
+						fmtPrec(cp1SvgX, o.Precision), fmtPrec(cp1SvgY, o.Precision),
+						fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
+						fmtPrec(midSvgX, o.Precision), fmtPrec(midSvgY, o.Precision)))
+
+					// Second bezier: midpoint to end
+					cp3SvgX, cp3SvgY := localToSVG(cp3X, cp3Y)
+					cp4SvgX, cp4SvgY := localToSVG(cp4X, cp4Y)
+					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
+						fmtPrec(cp3SvgX, o.Precision), fmtPrec(cp3SvgY, o.Precision),
+						fmtPrec(cp4SvgX, o.Precision), fmtPrec(cp4SvgY, o.Precision),
+						fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
+				} else if len(absPoints) == 4 {
+					// For 4 control points (common S-curve): use two cubic Beziers
+					// First half: start to midpoint using cp0, cp1
+					// Second half: midpoint to end using cp2, cp3
 					// Calculate midpoint between cp1 and cp2
 					midX := (absPoints[1][0] + absPoints[2][0]) / 2
 					midY := (absPoints[1][1] + absPoints[2][1]) / 2
@@ -1099,29 +1258,25 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 						fmtPrec(cp3SvgX, o.Precision), fmtPrec(cp3SvgY, o.Precision),
 						fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 				} else if len(absPoints) == 3 {
-					// 3 control points: split into two cubic Beziers at midpoint
-					// Midpoint between cp0 and cp1
-					midX := (absPoints[0][0] + absPoints[1][0]) / 2
-					midY := (absPoints[0][1] + absPoints[1][1]) / 2
-
-					// First cubic: prev → cp0 → cp0/cp1 midpoint → mid
+					// 3 control points (non-L-shaped): split into two cubic Beziers at cp1
+					// First cubic: prev → cp0 → mid(cp0,cp1) → cp1
 					cp0SvgX, cp0SvgY := localToSVG(absPoints[0][0], absPoints[0][1])
-					cp0_1_midX := (absPoints[0][0] + absPoints[1][0]) / 2
-					cp0_1_midY := (absPoints[0][1] + absPoints[1][1]) / 2
-					cp0_1_midSvgX, cp0_1_midSvgY := localToSVG(cp0_1_midX, cp0_1_midY)
-					midSvgX, midSvgY := localToSVG(midX, midY)
+					mid01X := (absPoints[0][0] + absPoints[1][0]) / 2
+					mid01Y := (absPoints[0][1] + absPoints[1][1]) / 2
+					mid01SvgX, mid01SvgY := localToSVG(mid01X, mid01Y)
+					cp1SvgX, cp1SvgY := localToSVG(absPoints[1][0], absPoints[1][1])
 					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
 						fmtPrec(cp0SvgX, o.Precision), fmtPrec(cp0SvgY, o.Precision),
-						fmtPrec(cp0_1_midSvgX, o.Precision), fmtPrec(cp0_1_midSvgY, o.Precision),
-						fmtPrec(midSvgX, o.Precision), fmtPrec(midSvgY, o.Precision)))
+						fmtPrec(mid01SvgX, o.Precision), fmtPrec(mid01SvgY, o.Precision),
+						fmtPrec(cp1SvgX, o.Precision), fmtPrec(cp1SvgY, o.Precision)))
 
-					// Second cubic: mid → cp1/cp2 midpoint → cp2 → end
-					cp1_2_midX := (absPoints[1][0] + absPoints[2][0]) / 2
-					cp1_2_midY := (absPoints[1][1] + absPoints[2][1]) / 2
-					cp1_2_midSvgX, cp1_2_midSvgY := localToSVG(cp1_2_midX, cp1_2_midY)
+					// Second cubic: cp1 → mid(cp1,cp2) → cp2 → end
+					mid12X := (absPoints[1][0] + absPoints[2][0]) / 2
+					mid12Y := (absPoints[1][1] + absPoints[2][1]) / 2
+					mid12SvgX, mid12SvgY := localToSVG(mid12X, mid12Y)
 					cp2SvgX, cp2SvgY := localToSVG(absPoints[2][0], absPoints[2][1])
 					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
-						fmtPrec(cp1_2_midSvgX, o.Precision), fmtPrec(cp1_2_midSvgY, o.Precision),
+						fmtPrec(mid12SvgX, o.Precision), fmtPrec(mid12SvgY, o.Precision),
 						fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
 						fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 				} else {
@@ -1155,7 +1310,32 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 				// Fallback: straight line to endpoint.
 				d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 			}
-			prevX, prevY = svgX, svgY
+
+			// For connectors with end arrows, add a small direction-establishing LineTo
+			// at the end of the path. This ensures SVG markers point in the overall
+			// path direction, not the curve tangent direction (which can be
+			// perpendicular when the last control point is at the same X or Y as
+			// the endpoint).
+			if hasEndArrow && isLastRow {
+				dx := svgX - startX
+				dy := svgY - startY
+				pathLen := math.Sqrt(dx*dx + dy*dy)
+				if pathLen > 0.01 {
+					// Add a small extension (1% of path length, min 0.1 SVG units)
+					ext := pathLen * 0.01
+					if ext < 0.1 {
+						ext = 0.1
+					}
+					extX := svgX + (dx/pathLen)*ext
+					extY := svgY + (dy/pathLen)*ext
+					d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(extX, o.Precision), fmtPrec(extY, o.Precision)))
+					prevX, prevY = extX, extY
+				} else {
+					prevX, prevY = svgX, svgY
+				}
+			} else {
+				prevX, prevY = svgX, svgY
+			}
 
 		default:
 			// Unknown row type: skip
@@ -1256,9 +1436,11 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 	}
 
 	// Scale line weight.
-	strokeWidth := lineWeight * ((scaleX + scaleY) / 2)
+	// Use non-scaling stroke for consistent visual weight across different shape sizes.
+	// The stroke width is in screen units when vector-effect="non-scaling-stroke" is used.
+	strokeWidth := lineWeight * 72 // Convert inches to points (screen units)
 	if strokeWidth <= 0 && stroke != "none" {
-		strokeWidth = 1
+		strokeWidth = 2.25 // Default Visio connector stroke weight
 	}
 	// For ellipse-only shapes (cylinder caps), ensure the white highlight stroke is visible.
 	if isEllipseOnly && stroke == "#FFFFFF" {
@@ -1363,8 +1545,14 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 		pathData = shortenPathEnd(pathData, arrowLen, o.Precision)
 	}
 
+	// Build vector-effect attribute for non-scaling stroke.
+	vectorEffect := ""
+	if stroke != "none" && stroke != "" {
+		vectorEffect = ` vector-effect="non-scaling-stroke"`
+	}
+
 	return svgRenderResult{
-		pathSVG:     fmt.Sprintf(`  <path d="%s" fill="%s" stroke="%s" stroke-width="%s"%s/>`, pathData, fill, stroke, fmtPrec(strokeWidth, o.Precision), extraAttrs),
+		pathSVG:     fmt.Sprintf(`  <path d="%s" fill="%s" stroke="%s" stroke-width="%s"%s%s/>`, pathData, fill, stroke, fmtPrec(strokeWidth, o.Precision), vectorEffect, extraAttrs),
 		strokeWidth: strokeWidth,
 		markers:     markers,
 		gradientID:  gradientID,
