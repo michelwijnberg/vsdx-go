@@ -12,12 +12,14 @@ Test VSDX files and their Visio-exported SVG references are in `../vsdx-svg/`:
 
 ## Tools
 
-### render_page.go - Full Page SVG Renderer
+Each tool lives in its own `cmd/` subdirectory to avoid multiple main functions.
+
+### cmd/render/render_page.go - Full Page SVG Renderer
 
 Renders entire VSDX pages to SVG, matching Visio's export format.
 
 ```bash
-go run render_page.go ../vsdx-svg/logical-architecture.vsdx
+go run ./cmd/render ../vsdx-svg/logical-architecture.vsdx
 # Output: ../vsdx-svg/logical-architecture-page1-generated.svg
 ```
 
@@ -31,12 +33,12 @@ Features:
 
 Coordinate system: Uses SVG coordinates (Y-down from top) with points (72/inch).
 
-### debug_geom.go - Geometry Inspector
+### cmd/debug-geom/debug_geom.go - Geometry Inspector
 
 Dumps all geometry data from shapes in a VSDX file.
 
 ```bash
-go run debug_geom.go ../vsdx-svg/logical-architecture.vsdx
+go run ./cmd/debug-geom ../vsdx-svg/logical-architecture.vsdx
 ```
 
 Output includes:
@@ -51,12 +53,12 @@ Useful for diagnosing:
 - Wrong row order (sorting bugs)
 - Incorrect cell values
 
-### debug_nurbs.go - NURBS Curve Analyzer
+### cmd/debug-nurbs/debug_nurbs.go - NURBS Curve Analyzer
 
 Parses and displays NURBS curve data from connector shapes.
 
 ```bash
-go run debug_nurbs.go ../vsdx-svg/logical-architecture.vsdx
+go run ./cmd/debug-nurbs ../vsdx-svg/logical-architecture.vsdx
 ```
 
 Output includes:
@@ -67,12 +69,12 @@ Output includes:
 
 Useful for understanding how Visio stores spline curves in dynamic connectors.
 
-### main.go - Shape SVG Exporter
+### cmd/main/main.go - Shape SVG Exporter
 
 Exports individual shapes to separate SVG files using ShapeToSVG().
 
 ```bash
-go run main.go ../vsdx-svg/logical-architecture.vsdx
+go run ./cmd/main ../vsdx-svg/logical-architecture.vsdx
 # Output: ../vsdx-svg/logical-architecture-generated/shape-*.svg
 ```
 
@@ -82,29 +84,29 @@ Output includes console info:
 - Connector begin/end points
 - Geometry row summary
 
-### compare_paths.go - SVG Path Comparator
+### cmd/compare-paths/compare_paths.go - SVG Path Comparator
 
 Compares SVG path data between two files.
 
 ```bash
-go run compare_paths.go our.svg visio.svg
+go run ./cmd/compare-paths our.svg visio.svg
 ```
 
 Extracts `d="..."` attributes and parses into normalized commands for comparison.
 Useful for identifying specific path differences.
 
-### check_text.go - Text Content Checker
+### cmd/check-text/check_text.go - Text Content Checker
 
 Quick script to list all shapes with text content.
 
 ```bash
-go run check_text.go
+go run ./cmd/check-text
 # Note: hardcoded to reference-architecture.vsdx
 ```
 
 ## Workflow
 
-1. **Generate SVG**: `go run render_page.go ../vsdx-svg/file.vsdx`
+1. **Generate SVG**: `go run ./cmd/render ../vsdx-svg/file.vsdx`
 
 2. **Compare visually**: Open both generated and reference SVG in browser
 
@@ -121,9 +123,7 @@ go run check_text.go
 ## Known Limitations
 
 Current render_page.go limitations:
-- NURBS curves simplified to straight lines
-- No shadows
 - No gradients
 - No line patterns (dashed/dotted)
 - Text always centered (ignores alignment settings)
-- No theme/style color inheritance
+- Limited theme/style color inheritance (connectors only)
