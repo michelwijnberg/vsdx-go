@@ -799,6 +799,9 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 
 	parentW := parent.Width()
 	parentH := parent.Height()
+	// Track if height was originally negative (common in connectors going downward).
+	// This affects Y coordinate transformation.
+	negativeHeight := parentH < 0
 	// Use absolute values for negative dimensions (common in connectors)
 	if parentW < 0 {
 		parentW = -parentW
@@ -816,6 +819,21 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 	// Sort geometry rows by IX.
 	sortedRows := sortGeometryRows(geom.Rows)
 
+	// Local coordinate transform that handles negative-height shapes correctly.
+	// For normal shapes: Y flips from bottom-up (Visio) to top-down (SVG).
+	// For negative-height shapes (connectors going down): Y coords are already negative,
+	// so we just negate them instead of subtracting from parentH.
+	localToSVG := func(visioX, visioY float64) (float64, float64) {
+		svgX := visioX * scaleX
+		var svgY float64
+		if negativeHeight {
+			svgY = -visioY * scaleY
+		} else {
+			svgY = (parentH - visioY) * scaleY
+		}
+		return svgX, svgY
+	}
+
 	// Build SVG path data.
 	var d strings.Builder
 	var prevX, prevY float64 // track current point in SVG space
@@ -826,13 +844,13 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 		case "moveto":
 			// Absolute coordinates in shape's local space (inches)
 			sx, sy := row.X(), row.Y()
-			svgX, svgY := toSVGCoords(sx+ss.offsetX, sy+ss.offsetY, parentH, scaleX, scaleY)
+			svgX, svgY := localToSVG(sx+ss.offsetX, sy+ss.offsetY)
 			d.WriteString(fmt.Sprintf("M%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 			prevX, prevY = svgX, svgY
 
 		case "lineto":
 			sx, sy := row.X(), row.Y()
-			svgX, svgY := toSVGCoords(sx+ss.offsetX, sy+ss.offsetY, parentH, scaleX, scaleY)
+			svgX, svgY := localToSVG(sx+ss.offsetX, sy+ss.offsetY)
 			d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 			prevX, prevY = svgX, svgY
 
@@ -841,7 +859,7 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			rx, ry := row.X(), row.Y()
 			absX := rx*ss.localW + ss.offsetX
 			absY := ry*ss.localH + ss.offsetY
-			svgX, svgY := toSVGCoords(absX, absY, parentH, scaleX, scaleY)
+			svgX, svgY := localToSVG(absX, absY)
 			d.WriteString(fmt.Sprintf("M%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 			prevX, prevY = svgX, svgY
 
@@ -849,13 +867,13 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			rx, ry := row.X(), row.Y()
 			absX := rx*ss.localW + ss.offsetX
 			absY := ry*ss.localH + ss.offsetY
-			svgX, svgY := toSVGCoords(absX, absY, parentH, scaleX, scaleY)
+			svgX, svgY := localToSVG(absX, absY)
 			d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 			prevX, prevY = svgX, svgY
 
 		case "arcto":
 			sx, sy := row.X(), row.Y()
-			svgX, svgY := toSVGCoords(sx+ss.offsetX, sy+ss.offsetY, parentH, scaleX, scaleY)
+			svgX, svgY := localToSVG(sx+ss.offsetX, sy+ss.offsetY)
 			bow := cellFloat(row, "A")
 
 			arcSVG := arcToSVG(prevX, prevY, svgX, svgY, bow*((scaleX+scaleY)/2), o.Precision)
@@ -864,7 +882,7 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 
 		case "ellipticalarcto":
 			ex, ey := row.X(), row.Y()
-			svgEndX, svgEndY := toSVGCoords(ex+ss.offsetX, ey+ss.offsetY, parentH, scaleX, scaleY)
+			svgEndX, svgEndY := localToSVG(ex+ss.offsetX, ey+ss.offsetY)
 			// A = control point X, B = control point Y, C = rotation angle (degrees), D = aspect ratio
 			cpX := cellFloat(row, "A") + ss.offsetX
 			cpY := cellFloat(row, "B") + ss.offsetY
@@ -872,7 +890,7 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			aspectRatio := cellFloat(row, "D") // major axis / minor axis ratio
 
 			// Convert control point to SVG coords
-			_, svgCpY := toSVGCoords(cpX, cpY, parentH, scaleX, scaleY)
+			_, svgCpY := localToSVG(cpX, cpY)
 
 			// Calculate arc parameters from start, control, and end points
 			// Start point is prevX, prevY (in Visio coords before SVG transform)
@@ -894,7 +912,7 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			rx, ry := row.X(), row.Y()
 			absX := rx*ss.localW + ss.offsetX
 			absY := ry*ss.localH + ss.offsetY
-			svgX, svgY := toSVGCoords(absX, absY, parentH, scaleX, scaleY)
+			svgX, svgY := localToSVG(absX, absY)
 			// A = control point (relative), B = control point Y, C = rotation angle (degrees), D = aspect ratio
 			cpRX := cellFloat(row, "A")
 			cpRY := cellFloat(row, "B")
@@ -920,14 +938,14 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			rx, ry := row.X(), row.Y()
 			absX := rx*ss.localW + ss.offsetX
 			absY := ry*ss.localH + ss.offsetY
-			svgX, svgY := toSVGCoords(absX, absY, parentH, scaleX, scaleY)
+			svgX, svgY := localToSVG(absX, absY)
 			// A, B = first control point; C, D = second control point
 			cp1X := cellFloat(row, "A")*ss.localW + ss.offsetX
 			cp1Y := cellFloat(row, "B")*ss.localH + ss.offsetY
 			cp2X := cellFloat(row, "C")*ss.localW + ss.offsetX
 			cp2Y := cellFloat(row, "D")*ss.localH + ss.offsetY
-			cp1SvgX, cp1SvgY := toSVGCoords(cp1X, cp1Y, parentH, scaleX, scaleY)
-			cp2SvgX, cp2SvgY := toSVGCoords(cp2X, cp2Y, parentH, scaleX, scaleY)
+			cp1SvgX, cp1SvgY := localToSVG(cp1X, cp1Y)
+			cp2SvgX, cp2SvgY := localToSVG(cp2X, cp2Y)
 			d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
 				fmtPrec(cp1SvgX, o.Precision), fmtPrec(cp1SvgY, o.Precision),
 				fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
@@ -939,11 +957,11 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			rx, ry := row.X(), row.Y()
 			absX := rx*ss.localW + ss.offsetX
 			absY := ry*ss.localH + ss.offsetY
-			svgX, svgY := toSVGCoords(absX, absY, parentH, scaleX, scaleY)
+			svgX, svgY := localToSVG(absX, absY)
 			// A, B = control point
 			cpX := cellFloat(row, "A")*ss.localW + ss.offsetX
 			cpY := cellFloat(row, "B")*ss.localH + ss.offsetY
-			cpSvgX, cpSvgY := toSVGCoords(cpX, cpY, parentH, scaleX, scaleY)
+			cpSvgX, cpSvgY := localToSVG(cpX, cpY)
 			d.WriteString(fmt.Sprintf("Q%s %s %s %s",
 				fmtPrec(cpSvgX, o.Precision), fmtPrec(cpSvgY, o.Precision),
 				fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
@@ -952,12 +970,12 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 		case "polylineto":
 			// PolylineTo: A cell contains POLYLINE formula with vertex list
 			sx, sy := row.X(), row.Y()
-			svgX, svgY := toSVGCoords(sx+ss.offsetX, sy+ss.offsetY, parentH, scaleX, scaleY)
+			svgX, svgY := localToSVG(sx+ss.offsetX, sy+ss.offsetY)
 			// Parse A cell for intermediate points and draw lines
 			aFormula := cellString(row, "A")
 			pts := parsePolylinePoints(aFormula, ss.localW, ss.localH, ss.offsetX, ss.offsetY)
 			for _, pt := range pts {
-				ptSvgX, ptSvgY := toSVGCoords(pt.x, pt.y, parentH, scaleX, scaleY)
+				ptSvgX, ptSvgY := localToSVG(pt.x, pt.y)
 				d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(ptSvgX, o.Precision), fmtPrec(ptSvgY, o.Precision)))
 				prevX, prevY = ptSvgX, ptSvgY
 			}
@@ -970,8 +988,8 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			sx, sy := row.X(), row.Y()
 			ax := cellFloat(row, "A")
 			ay := cellFloat(row, "B")
-			svgX1, svgY1 := toSVGCoords(sx+ss.offsetX, sy+ss.offsetY, parentH, scaleX, scaleY)
-			svgX2, svgY2 := toSVGCoords(ax+ss.offsetX, ay+ss.offsetY, parentH, scaleX, scaleY)
+			svgX1, svgY1 := localToSVG(sx+ss.offsetX, sy+ss.offsetY)
+			svgX2, svgY2 := localToSVG(ax+ss.offsetX, ay+ss.offsetY)
 			d.WriteString(fmt.Sprintf("M%s %s L%s %s",
 				fmtPrec(svgX1, o.Precision), fmtPrec(svgY1, o.Precision),
 				fmtPrec(svgX2, o.Precision), fmtPrec(svgY2, o.Precision)))
@@ -981,7 +999,7 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			// Ellipse: center (X,Y), control points (A,B) on major axis, (C,D) on minor axis.
 			// SVG ellipse uses center (cx,cy) and radii (rx, ry).
 			cx, cy := row.X(), row.Y()
-			svgCx, svgCy := toSVGCoords(cx+ss.offsetX, cy+ss.offsetY, parentH, scaleX, scaleY)
+			svgCx, svgCy := localToSVG(cx+ss.offsetX, cy+ss.offsetY)
 			// (A,B) is a point on the ellipse defining the end of the first semi-axis.
 			ax := cellFloat(row, "A")
 			ay := cellFloat(row, "B")
@@ -1009,7 +1027,7 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 
 		case "nurbsto":
 			sx, sy := row.X(), row.Y()
-			svgX, svgY := toSVGCoords(sx+ss.offsetX, sy+ss.offsetY, parentH, scaleX, scaleY)
+			svgX, svgY := localToSVG(sx+ss.offsetX, sy+ss.offsetY)
 
 			// Parse NURBS formula from E cell for control points.
 			eFormula := cellString(row, "E")
@@ -1033,8 +1051,8 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 					cp1AbsY = nurbsInfo.cps[0].y + ss.offsetY
 					cp2AbsY = nurbsInfo.cps[1].y + ss.offsetY
 				}
-				cp1SvgX, cp1SvgY := toSVGCoords(cp1AbsX, cp1AbsY, parentH, scaleX, scaleY)
-				cp2SvgX, cp2SvgY := toSVGCoords(cp2AbsX, cp2AbsY, parentH, scaleX, scaleY)
+				cp1SvgX, cp1SvgY := localToSVG(cp1AbsX, cp1AbsY)
+				cp2SvgX, cp2SvgY := localToSVG(cp2AbsX, cp2AbsY)
 				d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
 					fmtPrec(cp1SvgX, o.Precision), fmtPrec(cp1SvgY, o.Precision),
 					fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
@@ -1065,26 +1083,52 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 					midY := (absPoints[1][1] + absPoints[2][1]) / 2
 
 					// First cubic: prev → cp0 → cp1 → mid
-					cp0SvgX, cp0SvgY := toSVGCoords(absPoints[0][0], absPoints[0][1], parentH, scaleX, scaleY)
-					cp1SvgX, cp1SvgY := toSVGCoords(absPoints[1][0], absPoints[1][1], parentH, scaleX, scaleY)
-					midSvgX, midSvgY := toSVGCoords(midX, midY, parentH, scaleX, scaleY)
+					cp0SvgX, cp0SvgY := localToSVG(absPoints[0][0], absPoints[0][1])
+					cp1SvgX, cp1SvgY := localToSVG(absPoints[1][0], absPoints[1][1])
+					midSvgX, midSvgY := localToSVG(midX, midY)
 					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
 						fmtPrec(cp0SvgX, o.Precision), fmtPrec(cp0SvgY, o.Precision),
 						fmtPrec(cp1SvgX, o.Precision), fmtPrec(cp1SvgY, o.Precision),
 						fmtPrec(midSvgX, o.Precision), fmtPrec(midSvgY, o.Precision)))
 
 					// Second cubic: mid → cp2 → cp3 → end
-					cp2SvgX, cp2SvgY := toSVGCoords(absPoints[2][0], absPoints[2][1], parentH, scaleX, scaleY)
-					cp3SvgX, cp3SvgY := toSVGCoords(absPoints[3][0], absPoints[3][1], parentH, scaleX, scaleY)
+					cp2SvgX, cp2SvgY := localToSVG(absPoints[2][0], absPoints[2][1])
+					cp3SvgX, cp3SvgY := localToSVG(absPoints[3][0], absPoints[3][1])
 					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
 						fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
 						fmtPrec(cp3SvgX, o.Precision), fmtPrec(cp3SvgY, o.Precision),
 						fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
+				} else if len(absPoints) == 3 {
+					// 3 control points: split into two cubic Beziers at midpoint
+					// Midpoint between cp0 and cp1
+					midX := (absPoints[0][0] + absPoints[1][0]) / 2
+					midY := (absPoints[0][1] + absPoints[1][1]) / 2
+
+					// First cubic: prev → cp0 → cp0/cp1 midpoint → mid
+					cp0SvgX, cp0SvgY := localToSVG(absPoints[0][0], absPoints[0][1])
+					cp0_1_midX := (absPoints[0][0] + absPoints[1][0]) / 2
+					cp0_1_midY := (absPoints[0][1] + absPoints[1][1]) / 2
+					cp0_1_midSvgX, cp0_1_midSvgY := localToSVG(cp0_1_midX, cp0_1_midY)
+					midSvgX, midSvgY := localToSVG(midX, midY)
+					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
+						fmtPrec(cp0SvgX, o.Precision), fmtPrec(cp0SvgY, o.Precision),
+						fmtPrec(cp0_1_midSvgX, o.Precision), fmtPrec(cp0_1_midSvgY, o.Precision),
+						fmtPrec(midSvgX, o.Precision), fmtPrec(midSvgY, o.Precision)))
+
+					// Second cubic: mid → cp1/cp2 midpoint → cp2 → end
+					cp1_2_midX := (absPoints[1][0] + absPoints[2][0]) / 2
+					cp1_2_midY := (absPoints[1][1] + absPoints[2][1]) / 2
+					cp1_2_midSvgX, cp1_2_midSvgY := localToSVG(cp1_2_midX, cp1_2_midY)
+					cp2SvgX, cp2SvgY := localToSVG(absPoints[2][0], absPoints[2][1])
+					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
+						fmtPrec(cp1_2_midSvgX, o.Precision), fmtPrec(cp1_2_midSvgY, o.Precision),
+						fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
+						fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
 				} else {
-					// For 3 or 5+ points: use first and last two as control points
-					cp1SvgX, cp1SvgY := toSVGCoords(absPoints[0][0], absPoints[0][1], parentH, scaleX, scaleY)
+					// For 5+ points: use first and last as control points (simplified)
+					cp1SvgX, cp1SvgY := localToSVG(absPoints[0][0], absPoints[0][1])
 					lastIdx := len(absPoints) - 1
-					cp2SvgX, cp2SvgY := toSVGCoords(absPoints[lastIdx][0], absPoints[lastIdx][1], parentH, scaleX, scaleY)
+					cp2SvgX, cp2SvgY := localToSVG(absPoints[lastIdx][0], absPoints[lastIdx][1])
 					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
 						fmtPrec(cp1SvgX, o.Precision), fmtPrec(cp1SvgY, o.Precision),
 						fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
@@ -1103,7 +1147,7 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 				} else {
 					cpAbsY = nurbsInfo.cps[0].y + ss.offsetY
 				}
-				cpSvgX, cpSvgY := toSVGCoords(cpAbsX, cpAbsY, parentH, scaleX, scaleY)
+				cpSvgX, cpSvgY := localToSVG(cpAbsX, cpAbsY)
 				d.WriteString(fmt.Sprintf("Q%s %s %s %s",
 					fmtPrec(cpSvgX, o.Precision), fmtPrec(cpSvgY, o.Precision),
 					fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
@@ -1914,7 +1958,9 @@ func shortenPathEnd(pathData string, shortenBy float64, precision int) string {
 		dx := endX - cp2X
 		dy := endY - cp2Y
 		length := math.Sqrt(dx*dx + dy*dy)
-		if length > 0.001 {
+		// Only shorten if the tangent segment is longer than what we need to shorten.
+		// Otherwise the shortening would be disproportionate or move the point backwards.
+		if length > shortenBy {
 			// Shorten along the tangent direction
 			ratio := shortenBy / length
 			newEndX := endX - dx*ratio
