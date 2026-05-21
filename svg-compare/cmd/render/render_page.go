@@ -397,22 +397,17 @@ func renderGeometry(shape *vsdx.Shape, scale float64, prec int) string {
 	// Calculate arrow setback for connectors
 	beginSetback, endSetback := getArrowSetback(shape)
 
-	// Get fill and stroke colors
-	fillColor := shape.FillColor()
-	lineColor := shape.LineColor()
-	lineWeight := shape.LineWeight() * scale
+	// Get fill and stroke colors using ComputeEffectiveStyle for proper resolution
+	es := shape.ComputeEffectiveStyle()
+	fillColor := es.EffectiveFillColor()
+	lineColor := es.EffectiveLineColor()
+	lineWeight := es.LineWeight * scale
 
 	if fillColor == "" {
 		fillColor = "none"
 	}
 	if lineColor == "" {
-		// Use theme accent color for connectors (shapes with no fill and a line)
-		// Detect connector by checking BeginX/EndX cells (connectors have these)
-		if shape.CellValue("BeginX") != "" || shape.CellValue("EndX") != "" {
-			lineColor = "#5b9bd5" // Theme accent4 - default connector color
-		} else {
-			lineColor = "#000000"
-		}
+		lineColor = "#000000"
 	}
 	if lineWeight == 0 {
 		lineWeight = 0.75 // default 1pt in 72dpi
