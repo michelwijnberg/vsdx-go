@@ -99,7 +99,14 @@ func newShape(xml *etree.Element, parent ShapeParent, page *Page) *Shape {
 		if geometrySection.SelectAttrValue("N", "") != "Geometry" {
 			continue
 		}
-		g := newGeometry(geometrySection, s)
+		// Parse geometry index from IX attribute, fallback to current slice length
+		geomIndex := len(s.Geometries)
+		if ixStr := geometrySection.SelectAttrValue("IX", ""); ixStr != "" {
+			if ix, err := strconv.Atoi(ixStr); err == nil {
+				geomIndex = ix
+			}
+		}
+		g := newGeometry(geometrySection, s, geomIndex)
 		s.Geometries = append(s.Geometries, g)
 		if s.Geometry == nil {
 			s.Geometry = g // backward compat: first section
@@ -341,6 +348,25 @@ func (s *Shape) TextColor() string {
 		return colorCell.SelectAttrValue("V", "")
 	}
 	return ""
+}
+
+// TextSize returns the font size from the Character section in inches.
+// Falls back to master shape if not found locally.
+func (s *Shape) TextSize() float64 {
+	charSection := s.xml.FindElement("Section[@N='Character']")
+	if charSection != nil {
+		sizeCell := charSection.FindElement("Row/Cell[@N='Size']")
+		if sizeCell != nil {
+			return toFloat(sizeCell.SelectAttrValue("V", ""))
+		}
+	}
+	// Try master shape
+	if s.MasterPageID != "" {
+		if ms := s.MasterShape(); ms != nil {
+			return ms.TextSize()
+		}
+	}
+	return 0
 }
 
 // EndArrow returns the EndArrow cell value.
@@ -1104,11 +1130,12 @@ func clearAllText(e *etree.Element) {
 // AddGeometry creates a new empty Geometry section on the shape and returns it.
 // Use the returned Geometry's AddMoveTo/AddLineTo methods to define the path.
 func (s *Shape) AddGeometry() *Geometry {
+	geomIndex := len(s.Geometries)
 	section := s.xml.CreateElement("Section")
 	section.CreateAttr("N", "Geometry")
-	section.CreateAttr("IX", strconv.Itoa(len(s.Geometries)))
+	section.CreateAttr("IX", strconv.Itoa(geomIndex))
 
-	g := newGeometry(section, s)
+	g := newGeometry(section, s, geomIndex)
 	s.Geometries = append(s.Geometries, g)
 	if s.Geometry == nil {
 		s.Geometry = g

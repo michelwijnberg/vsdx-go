@@ -18,7 +18,9 @@ type Geometry struct {
 }
 
 // newGeometry creates a Geometry from an XML Section element with N="Geometry".
-func newGeometry(xml *etree.Element, shape *Shape) *Geometry {
+// geomIndex specifies which geometry section this is (IX attribute), used to inherit from
+// the correct master geometry section.
+func newGeometry(xml *etree.Element, shape *Shape, geomIndex int) *Geometry {
 	g := &Geometry{
 		xml:   xml,
 		Cells: make([]*GeometryCell, 0),
@@ -26,11 +28,17 @@ func newGeometry(xml *etree.Element, shape *Shape) *Geometry {
 		shape: shape,
 	}
 
-	// Inherit cells from master shape geometry
+	// Find the corresponding master geometry by index
+	var masterGeom *Geometry
 	masterShape := shape.MasterShape()
-	if masterShape != nil && masterShape.Geometry != nil {
+	if masterShape != nil && geomIndex >= 0 && geomIndex < len(masterShape.Geometries) {
+		masterGeom = masterShape.Geometries[geomIndex]
+	}
+
+	// Inherit cells from master shape geometry (using correct geometry section)
+	if masterGeom != nil {
 		// Copy master cells (not share reference)
-		g.Cells = append(g.Cells, masterShape.Geometry.Cells...)
+		g.Cells = append(g.Cells, masterGeom.Cells...)
 	}
 
 	// Add/overwrite with local cells
@@ -38,9 +46,9 @@ func newGeometry(xml *etree.Element, shape *Shape) *Geometry {
 		g.Cells = append(g.Cells, newGeometryCell(g, cellElem))
 	}
 
-	// Inherit rows from master shape geometry
-	if masterShape != nil && masterShape.Geometry != nil {
-		for k, v := range masterShape.Geometry.Rows {
+	// Inherit rows from master shape geometry (using correct geometry section)
+	if masterGeom != nil {
+		for k, v := range masterGeom.Rows {
 			g.Rows[k] = v
 		}
 	}

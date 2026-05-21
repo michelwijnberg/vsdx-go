@@ -6,6 +6,7 @@ import (
 	"math"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -54,23 +55,23 @@ type ArrowDef struct {
 }
 
 // visioArrowTypes maps Visio arrow type indices to SVG path definitions.
-// Defined by MS-VSDX spec §2.4.4.
+// RefX=0 places arrow back at line end; path must be shortened so arrow tip reaches target.
 var visioArrowTypes = map[int]ArrowDef{
 	0:  {}, // None
-	1:  {Path: "M0 0 L10 5 L0 10 z", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: true},      // Triangle (filled)
-	2:  {Path: "M0 0 L10 5 L0 10 L2 5 z", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: true}, // Stealth
-	3:  {Path: "M0 0 L10 5 L0 10", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: false},       // Triangle (open)
-	4:  {Path: "M0 0 L10 5 M0 10 L10 5", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: false}, // Line (open)
-	5:  {Path: "M10 5 A5 5 0 1 0 10 5.01 z", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: true},  // Oval (filled)
-	6:  {Path: "M5 0 L10 5 L5 10 L0 5 z", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: true},     // Diamond (filled)
-	7:  {Path: "M5 0 L10 5 L5 10 L0 5 z", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: false},    // Diamond (open)
-	8:  {Path: "M10 5 A5 5 0 1 0 10 5.01 z", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: false}, // Oval (open)
-	9:  {Path: "M0 0 L10 5 L0 10 z M0 2 L8 5 L0 8 z", Width: 12, Height: 10, RefX: 12, RefY: 5, Filled: true}, // Double triangle
-	10: {Path: "M0 0 L10 4 L10 6 L0 10 z", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: true},    // Triangle 45°
-	13: {Path: "M0 0 L10 5 L0 10 z", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: true},          // Standard arrow
-	14: {Path: "M0 0 L10 5 L0 10", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: false},           // Open arrow
+	1:  {Path: "M0 0 L10 5 L0 10 z", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: true},       // Triangle (filled)
+	2:  {Path: "M0 0 L10 5 L0 10 L2 5 z", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: true},  // Stealth
+	3:  {Path: "M0 0 L10 5 L0 10", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: false},        // Triangle (open)
+	4:  {Path: "M0 0 L10 5 M0 10 L10 5", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: false},  // Line (open)
+	5:  {Path: "M0 5 A5 5 0 1 1 10 5 A5 5 0 1 1 0 5 z", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: true},   // Oval (filled)
+	6:  {Path: "M0 5 L5 0 L10 5 L5 10 z", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: true},  // Diamond (filled)
+	7:  {Path: "M0 5 L5 0 L10 5 L5 10 z", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: false}, // Diamond (open)
+	8:  {Path: "M0 5 A5 5 0 1 1 10 5 A5 5 0 1 1 0 5 z", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: false},  // Oval (open)
+	9:  {Path: "M0 0 L10 5 L0 10 z", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: true},       // Double triangle
+	10: {Path: "M0 0 L10 5 L0 10 z", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: true},       // Triangle 45°
+	13: {Path: "M0 0 L10 5 L0 10 z", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: true},       // Standard arrow
+	14: {Path: "M0 0 L10 5 L0 10", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: false},        // Open arrow
 	22: {Path: "M0 5 L5 0 L10 5 M0 5 L5 10 L10 5", Width: 10, Height: 10, RefX: 5, RefY: 5, Filled: false}, // Fletching
-	45: {Path: "M0 0 L10 5 L0 10 z", Width: 10, Height: 10, RefX: 10, RefY: 5, Filled: true},          // Filled arrow (fallback)
+	45: {Path: "M0 0 L10 5 L0 10 z", Width: 10, Height: 10, RefX: 0, RefY: 5, Filled: true},       // Filled arrow (fallback)
 }
 
 // arrowSizeMultipliers maps Visio arrow size indices (0-6) to scale multipliers.
@@ -131,7 +132,11 @@ func ShapeToSVG(shape *Shape, opts ...SVGOption) (*SVGResult, error) {
 	if shapeW <= 0 {
 		shapeW = 1
 	}
-	if shapeH <= 0 {
+	// Use absolute value for negative heights (common in connectors going downward)
+	if shapeH < 0 {
+		shapeH = -shapeH
+	}
+	if shapeH == 0 {
 		shapeH = 1
 	}
 
@@ -232,6 +237,25 @@ func ShapeToSVG(shape *Shape, opts ...SVGOption) (*SVGResult, error) {
 		svg.WriteString("  </defs>\n")
 	}
 
+	// Check if the shape has rotation (Angle property in radians).
+	shapeAngle := toFloat(shape.CellValue("Angle"))
+	hasRotation := shapeAngle != 0
+
+	// If rotated, wrap content in a group with rotation transform.
+	// Rotation is around the center of the output SVG.
+	// Note: Negate the angle because Visio uses counter-clockwise positive (Y-up)
+	// while SVG uses clockwise positive, and we've already flipped the Y axis.
+	if hasRotation {
+		angleDeg := -shapeAngle * 180 / math.Pi
+		cx := outW / 2
+		cy := outH / 2
+		svg.WriteString(fmt.Sprintf(`  <g transform="rotate(%s %s %s)">`,
+			fmtPrec(angleDeg, o.Precision),
+			fmtPrec(cx, o.Precision),
+			fmtPrec(cy, o.Precision)))
+		svg.WriteByte('\n')
+	}
+
 	for _, p := range pathElements {
 		svg.WriteString(p)
 		svg.WriteByte('\n')
@@ -244,6 +268,11 @@ func ShapeToSVG(shape *Shape, opts ...SVGOption) (*SVGResult, error) {
 			svg.WriteString(textSVG)
 			svg.WriteByte('\n')
 		}
+	}
+
+	// Close rotation group if present.
+	if hasRotation {
+		svg.WriteString("  </g>\n")
 	}
 
 	svg.WriteString("</svg>\n")
@@ -273,10 +302,16 @@ func generateMarkerSVG(m markerRef, precision int) string {
 		sizeMult = arrowSizeMultipliers[m.size]
 	}
 
-	w := def.Width * sizeMult
-	h := def.Height * sizeMult
-	refX := def.RefX * sizeMult
-	refY := def.RefY * sizeMult
+	// Scale marker size relative to line width.
+	// markerWidth/Height are in stroke-width units. Keep arrows small and proportional.
+	scaleFactor := sizeMult * 0.4
+	w := def.Width * scaleFactor
+	h := def.Height * scaleFactor
+
+	// refX=0 for all arrows - arrow back at attachment, tip extends forward
+	// Path shortening ensures the line ends before the arrow
+	refX := def.RefX
+	refY := def.RefY
 
 	fillAttr := "none"
 	strokeAttr := m.color
@@ -285,9 +320,13 @@ func generateMarkerSVG(m markerRef, precision int) string {
 		strokeAttr = "none"
 	}
 
-	orient := "auto-start-reverse"
+	// For arrows to point INTO shapes:
+	// - End marker: tip should point backward (opposite to path direction) into end shape
+	// - Start marker: tip should point forward (in path direction) into start shape
+	// With arrow tip at positive X: auto-start-reverse flips direction
+	orient := "auto"
 	if m.isEnd {
-		orient = "auto"
+		orient = "auto-start-reverse"
 	}
 
 	return fmt.Sprintf(`    <marker id="%s" viewBox="0 0 %s %s" refX="%s" refY="%s" markerWidth="%s" markerHeight="%s" orient="%s"><path d="%s" fill="%s" stroke="%s"/></marker>`,
@@ -311,7 +350,11 @@ func renderShapeText(ss renderableShape, parent *Shape, scaleX, scaleY float64, 
 	text = escapeXML(text)
 
 	parentH := parent.Height()
-	if parentH <= 0 {
+	// Use absolute value for negative heights (common in connectors)
+	if parentH < 0 {
+		parentH = -parentH
+	}
+	if parentH == 0 {
 		parentH = 1
 	}
 
@@ -333,12 +376,19 @@ func renderShapeText(ss renderableShape, parent *Shape, scaleX, scaleY float64, 
 	txtAngle := toFloat(s.CellValue("TxtAngle"))
 
 	// Get vertical alignment: 0=top, 1=middle, 2=bottom.
-	vertAlign := int(toFloat(s.CellValue("VerticalAlign")))
+	// Default is 1 (middle) when not specified.
+	vertAlignStr := s.CellValue("VerticalAlign")
+	vertAlign := 1 // default to middle
+	if vertAlignStr != "" {
+		vertAlign = int(toFloat(vertAlignStr))
+	}
 
 	// Get horizontal alignment from paragraph: 0=left, 1=center, 2=right, 3=justify.
-	horzAlign := int(toFloat(s.CellValue("Para.HorzAlign")))
-	if horzAlign == 0 {
-		horzAlign = 1 // default to center
+	// Default is 1 (center) when not specified.
+	horzAlignStr := s.CellValue("Para.HorzAlign")
+	horzAlign := 1 // default to center
+	if horzAlignStr != "" {
+		horzAlign = int(toFloat(horzAlignStr))
 	}
 
 	// Get margins.
@@ -386,17 +436,26 @@ func renderShapeText(ss renderableShape, parent *Shape, scaleX, scaleY float64, 
 		baseline = "alphabetic"
 	}
 
-	// Get font size (Character section, Char.Size cell).
-	fontSize := toFloat(s.CellValue("Char.Size"))
+	// Get font size from Character section (in inches).
+	fontSize := s.TextSize()
 	if fontSize == 0 {
 		fontSize = 12.0 / 72.0 // Default 12pt in inches
 	}
-	fontSizePx := fontSize * ((scaleX + scaleY) / 2)
+	// Scale down font size slightly to better match Visio rendering.
+	// Visio's text rendering appears to use tighter metrics than SVG defaults.
+	fontSizePx := fontSize * ((scaleX + scaleY) / 2) * 0.9
 
 	// Get text color.
 	textColor := resolveColor(s.TextColor())
 	if textColor == "" {
-		textColor = "#000000"
+		// If no explicit text color, check if we need white text for contrast
+		// against a dark fill (common in themed shapes)
+		fillColor := resolveColor(s.FillColor())
+		if fillColor != "" && isDarkColor(fillColor) {
+			textColor = "#FFFFFF"
+		} else {
+			textColor = "#000000"
+		}
 	}
 
 	// Get font weight and style.
@@ -419,8 +478,21 @@ func renderShapeText(ss renderableShape, parent *Shape, scaleX, scaleY float64, 
 			fmtPrec(svgY, o.Precision))
 	}
 
-	// Handle multi-line text.
-	lines := strings.Split(text, "\n")
+	// Calculate available text width for wrapping.
+	availableWidth := (ss.localW - leftMargin - rightMargin) * ((scaleX + scaleY) / 2)
+	// Approximate character width: ~0.48 of font size for average proportional font.
+	// Slightly higher than typical to ensure text wraps where Visio wraps it.
+	charWidth := fontSizePx * 0.48
+
+	// Wrap text to fit within shape width.
+	lines := wrapText(text, availableWidth, charWidth)
+	// Remove empty trailing lines.
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) == 0 {
+		return ""
+	}
 	if len(lines) == 1 {
 		return fmt.Sprintf(`  <text x="%s" y="%s" text-anchor="%s" dominant-baseline="%s" fill="%s" font-size="%s" font-weight="%s" font-style="%s"%s>%s</text>`,
 			fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision),
@@ -430,14 +502,22 @@ func renderShapeText(ss renderableShape, parent *Shape, scaleX, scaleY float64, 
 	}
 
 	// Multi-line text: use tspans.
+	lineHeight := fontSizePx * 1.2
+	totalTextHeight := lineHeight * float64(len(lines))
+
+	// Adjust starting Y position to center the text block vertically.
+	startY := svgY
+	if vertAlign == 1 { // Middle aligned
+		startY = svgY - (totalTextHeight-lineHeight)/2
+	}
+
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf(`  <text x="%s" y="%s" text-anchor="%s" dominant-baseline="%s" fill="%s" font-size="%s" font-weight="%s" font-style="%s"%s>`,
-		fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision),
+		fmtPrec(svgX, o.Precision), fmtPrec(startY, o.Precision),
 		textAnchor, baseline, textColor,
 		fmtPrec(fontSizePx, o.Precision), fontWeight, fontStyle,
 		transform))
 
-	lineHeight := fontSizePx * 1.2
 	for i, line := range lines {
 		dy := "0"
 		if i > 0 {
@@ -448,6 +528,57 @@ func renderShapeText(ss renderableShape, parent *Shape, scaleX, scaleY float64, 
 	}
 	result.WriteString("</text>")
 	return result.String()
+}
+
+// wrapText splits text into lines that fit within the given width.
+// charWidth is the approximate width per character in SVG units.
+func wrapText(text string, maxWidth, charWidth float64) []string {
+	if maxWidth <= 0 || charWidth <= 0 {
+		return []string{text}
+	}
+
+	// Handle existing newlines first.
+	inputLines := strings.Split(text, "\n")
+	var result []string
+
+	for _, inputLine := range inputLines {
+		words := strings.Fields(inputLine)
+		if len(words) == 0 {
+			result = append(result, "")
+			continue
+		}
+
+		var currentLine strings.Builder
+		currentWidth := 0.0
+		spaceWidth := charWidth // approximate space width
+
+		for i, word := range words {
+			wordWidth := float64(len(word)) * charWidth
+
+			if i == 0 {
+				// First word on line
+				currentLine.WriteString(word)
+				currentWidth = wordWidth
+			} else if currentWidth+spaceWidth+wordWidth <= maxWidth {
+				// Word fits on current line
+				currentLine.WriteString(" ")
+				currentLine.WriteString(word)
+				currentWidth += spaceWidth + wordWidth
+			} else {
+				// Word doesn't fit, start new line
+				result = append(result, currentLine.String())
+				currentLine.Reset()
+				currentLine.WriteString(word)
+				currentWidth = wordWidth
+			}
+		}
+
+		if currentLine.Len() > 0 {
+			result = append(result, currentLine.String())
+		}
+	}
+
+	return result
 }
 
 // escapeXML escapes special XML characters in a string.
@@ -465,6 +596,8 @@ func escapeXML(s string) string {
 type renderableShape struct {
 	shape          *Shape
 	geom           *Geometry // specific geometry section to render
+	geomIndex      int       // index of this geometry within the shape (0=first, 1=second, etc.)
+	totalGeoms     int       // total number of geometries in the shape
 	offsetX        float64   // X offset in parent group's coordinate space (inches)
 	offsetY        float64   // Y offset in parent group's coordinate space (inches)
 	localW, localH float64   // shape's own width/height
@@ -485,6 +618,43 @@ func shapeHasGeometry(s *Shape) bool {
 func collectRenderableShapes(shape *Shape) []renderableShape {
 	if shape.ShapeType == "Group" {
 		var result []renderableShape
+
+		// Collect the group's own geometry (if any) - stored separately to add LAST
+		// This ensures proper Z-order: children render first (back), group geometry last (front)
+		// Important for shapes like Can where the top ellipse should overlay the body
+		var groupGeoms []renderableShape
+		geoms := shape.Geometries
+		if len(geoms) == 0 {
+			// Page group shape may not have direct geometry - check master
+			if ms := shape.MasterShape(); ms != nil {
+				geoms = ms.Geometries
+			}
+		}
+		totalGeoms := len(geoms)
+		for i, g := range geoms {
+			if len(g.Rows) > 0 {
+				groupGeoms = append(groupGeoms, renderableShape{
+					shape:      shape, // Use page shape for styling
+					geom:       g,
+					geomIndex:  i,
+					totalGeoms: totalGeoms,
+					offsetX:    0,
+					offsetY:    0,
+					localW:     shape.Width(),
+					localH:     shape.Height(),
+				})
+			}
+		}
+
+		// Collect child shapes with z-order adjustment:
+		// Multi-geometry shapes (like icon backgrounds with circles) should render first,
+		// then single-geometry shapes (like meridian lines) render on top.
+		// This handles cases like Azure globe icons where the white circle background
+		// should be behind all the meridian detail shapes.
+		var multiGeomChildren []renderableShape
+		var singleGeomChildren []renderableShape
+		var nestedGroupChildren []renderableShape
+
 		for _, child := range shape.ChildShapes() {
 			childW := child.Width()
 			childH := child.Height()
@@ -501,45 +671,104 @@ func collectRenderableShapes(shape *Shape) []renderableShape {
 			oy := child.Y() - child.LocY()
 
 			if child.ShapeType == "Group" {
-				// Recursive: collect from nested group
+				// Recursive: collect from nested group (preserves their internal z-order)
 				for _, nested := range collectRenderableShapes(child) {
 					nested.offsetX += ox
 					nested.offsetY += oy
-					result = append(result, nested)
+					nestedGroupChildren = append(nestedGroupChildren, nested)
 				}
-			} else if shapeHasGeometry(child) {
-				for _, g := range child.Geometries {
+			} else {
+				// Determine geometry count to classify the shape
+				var geoms []*Geometry
+				var totalGeoms int
+				usePageShape := true
+
+				if shapeHasGeometry(child) {
+					geoms = child.Geometries
+					totalGeoms = len(geoms)
+				} else if ms := child.MasterShape(); ms != nil && shapeHasGeometry(ms) {
+					geoms = ms.Geometries
+					totalGeoms = len(geoms)
+					usePageShape = true // Still use page shape for styling
+				}
+
+				for i, g := range geoms {
 					if len(g.Rows) == 0 {
 						continue
 					}
-					result = append(result, renderableShape{
-						shape:   child,
-						geom:    g,
-						offsetX: ox,
-						offsetY: oy,
-						localW:  childW,
-						localH:  childH,
-					})
+					rs := renderableShape{
+						shape:      child,
+						geom:       g,
+						geomIndex:  i,
+						totalGeoms: totalGeoms,
+						offsetX:    ox,
+						offsetY:    oy,
+						localW:     childW,
+						localH:     childH,
+					}
+					if !usePageShape {
+						rs.shape = child // Ensure page shape for styling
+					}
+					if totalGeoms > 1 {
+						multiGeomChildren = append(multiGeomChildren, rs)
+					} else {
+						singleGeomChildren = append(singleGeomChildren, rs)
+					}
 				}
 			}
 		}
+
+		// Add in z-order: multi-geom backgrounds first, then single-geom details, then nested groups
+		result = append(result, multiGeomChildren...)
+		result = append(result, singleGeomChildren...)
+		result = append(result, nestedGroupChildren...)
+
+		// Add group's own geometry LAST so it renders on top (front)
+		result = append(result, groupGeoms...)
 		return result
 	}
 
 	// Simple shape — emit one renderable per geometry section.
 	var result []renderableShape
-	for _, g := range shape.Geometries {
+
+	// First try shape's own geometry
+	shapeTotalGeoms := len(shape.Geometries)
+	for i, g := range shape.Geometries {
 		if len(g.Rows) > 0 {
 			result = append(result, renderableShape{
-				shape:   shape,
-				geom:    g,
-				offsetX: 0,
-				offsetY: 0,
-				localW:  shape.Width(),
-				localH:  shape.Height(),
+				shape:      shape,
+				geom:       g,
+				geomIndex:  i,
+				totalGeoms: shapeTotalGeoms,
+				offsetX:    0,
+				offsetY:    0,
+				localW:     shape.Width(),
+				localH:     shape.Height(),
 			})
 		}
 	}
+
+	// If no geometry, check for master shape with geometry
+	if len(result) == 0 {
+		if ms := shape.MasterShape(); ms != nil {
+			msTotalGeoms := len(ms.Geometries)
+			for i, g := range ms.Geometries {
+				if len(g.Rows) > 0 {
+					result = append(result, renderableShape{
+						shape:      shape, // Keep page shape for styling
+						geom:       g,     // Use master's geometry
+						geomIndex:  i,
+						totalGeoms: msTotalGeoms,
+						offsetX:    0,
+						offsetY:    0,
+						localW:     shape.Width(),
+						localH:     shape.Height(),
+					})
+				}
+			}
+		}
+	}
+
 	return result
 }
 
@@ -556,12 +785,31 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 		return svgRenderResult{}
 	}
 
+	// Check if this is an ellipse-only geometry (e.g., cylinder top lid).
+	// For such shapes, we suppress the stroke because it would create an ugly
+	// line cutting through the body when the ellipse overlays another shape.
+	isEllipseOnly := false
+	if len(geom.Rows) == 1 {
+		for _, row := range geom.Rows {
+			if strings.ToLower(row.RowType()) == "ellipse" {
+				isEllipseOnly = true
+			}
+		}
+	}
+
 	parentW := parent.Width()
 	parentH := parent.Height()
-	if parentW <= 0 {
-		parentW = 1 //nolint:ineffassign // kept for symmetry with parentH guard
+	// Use absolute values for negative dimensions (common in connectors)
+	if parentW < 0 {
+		parentW = -parentW
 	}
-	if parentH <= 0 {
+	if parentW == 0 {
+		parentW = 1
+	}
+	if parentH < 0 {
+		parentH = -parentH
+	}
+	if parentH == 0 {
 		parentH = 1
 	}
 
@@ -615,24 +863,56 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 			prevX, prevY = svgX, svgY
 
 		case "ellipticalarcto":
-			sx, sy := row.X(), row.Y()
-			svgX, svgY := toSVGCoords(sx+ss.offsetX, sy+ss.offsetY, parentH, scaleX, scaleY)
-			// A = control point X, B = control point Y, C = aspect ratio, D = angle
-			cpX := cellFloat(row, "A")
-			cpY := cellFloat(row, "B")
-			_ = cpX
-			_ = cpY
-			// Approximate as line for now — elliptical arcs are complex and rare in stencils
-			d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
-			prevX, prevY = svgX, svgY
+			ex, ey := row.X(), row.Y()
+			svgEndX, svgEndY := toSVGCoords(ex+ss.offsetX, ey+ss.offsetY, parentH, scaleX, scaleY)
+			// A = control point X, B = control point Y, C = rotation angle (degrees), D = aspect ratio
+			cpX := cellFloat(row, "A") + ss.offsetX
+			cpY := cellFloat(row, "B") + ss.offsetY
+			rotAngleDeg := cellFloat(row, "C") // rotation angle in degrees
+			aspectRatio := cellFloat(row, "D") // major axis / minor axis ratio
+
+			// Convert control point to SVG coords
+			_, svgCpY := toSVGCoords(cpX, cpY, parentH, scaleX, scaleY)
+
+			// Calculate arc parameters from start, control, and end points
+			// Start point is prevX, prevY (in Visio coords before SVG transform)
+			startX := (prevX/scaleX - ss.offsetX)
+			startY := parentH - (prevY/scaleY) - ss.offsetY
+
+			arcSVG := ellipticalArcToSVG(startX, startY, cpX-ss.offsetX, cpY-ss.offsetY, ex, ey,
+				aspectRatio, rotAngleDeg, scaleX, scaleY, parentH, ss.offsetX, ss.offsetY, o.Precision)
+			if arcSVG != "" {
+				d.WriteString(arcSVG)
+			} else {
+				// Fallback to line if arc calculation fails
+				d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(svgEndX, o.Precision), fmtPrec(svgEndY, o.Precision)))
+			}
+			_ = svgCpY // used for sweep direction
+			prevX, prevY = svgEndX, svgEndY
 
 		case "relellipticalarcto":
 			rx, ry := row.X(), row.Y()
 			absX := rx*ss.localW + ss.offsetX
 			absY := ry*ss.localH + ss.offsetY
 			svgX, svgY := toSVGCoords(absX, absY, parentH, scaleX, scaleY)
-			// Approximate as line (same as absolute version)
-			d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
+			// A = control point (relative), B = control point Y, C = rotation angle (degrees), D = aspect ratio
+			cpRX := cellFloat(row, "A")
+			cpRY := cellFloat(row, "B")
+			rotAngleDeg := cellFloat(row, "C")
+			aspectRatio := cellFloat(row, "D")
+			cpX := cpRX*ss.localW + ss.offsetX
+			cpY := cpRY*ss.localH + ss.offsetY
+
+			startX := (prevX/scaleX - ss.offsetX)
+			startY := parentH - (prevY/scaleY) - ss.offsetY
+
+			arcSVG := ellipticalArcToSVG(startX, startY, cpX-ss.offsetX, cpY-ss.offsetY, absX-ss.offsetX, absY-ss.offsetY,
+				aspectRatio, rotAngleDeg, scaleX, scaleY, parentH, ss.offsetX, ss.offsetY, o.Precision)
+			if arcSVG != "" {
+				d.WriteString(arcSVG)
+			} else {
+				d.WriteString(fmt.Sprintf("L%s %s", fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
+			}
 			prevX, prevY = svgX, svgY
 
 		case "relcubbezto":
@@ -733,27 +1013,96 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 
 			// Parse NURBS formula from E cell for control points.
 			eFormula := cellString(row, "E")
-			cps := parseNURBSControlPoints(eFormula)
+			nurbsInfo := parseNURBSData(eFormula)
 
-			if len(cps) == 2 {
+			if nurbsInfo != nil && len(nurbsInfo.cps) == 2 {
 				// Degree 3, 2 interior control points → cubic Bezier.
-				// Control point coordinates are proportional (0-1) of shape dimensions
-				// when xType=0/yType=0, or absolute when xType=1/yType=1.
-				// Visio uses the same proportional space as RelMoveTo.
-				cp1AbsX := cps[0].x*ss.localW + ss.offsetX
-				cp1AbsY := cps[0].y*ss.localH + ss.offsetY
-				cp2AbsX := cps[1].x*ss.localW + ss.offsetX
-				cp2AbsY := cps[1].y*ss.localH + ss.offsetY
+				// xType/yType: 0 = proportional (0-1), 1 = absolute (inches)
+				var cp1AbsX, cp1AbsY, cp2AbsX, cp2AbsY float64
+				if nurbsInfo.xType == 0 {
+					cp1AbsX = nurbsInfo.cps[0].x*ss.localW + ss.offsetX
+					cp2AbsX = nurbsInfo.cps[1].x*ss.localW + ss.offsetX
+				} else {
+					cp1AbsX = nurbsInfo.cps[0].x + ss.offsetX
+					cp2AbsX = nurbsInfo.cps[1].x + ss.offsetX
+				}
+				if nurbsInfo.yType == 0 {
+					cp1AbsY = nurbsInfo.cps[0].y*ss.localH + ss.offsetY
+					cp2AbsY = nurbsInfo.cps[1].y*ss.localH + ss.offsetY
+				} else {
+					cp1AbsY = nurbsInfo.cps[0].y + ss.offsetY
+					cp2AbsY = nurbsInfo.cps[1].y + ss.offsetY
+				}
 				cp1SvgX, cp1SvgY := toSVGCoords(cp1AbsX, cp1AbsY, parentH, scaleX, scaleY)
 				cp2SvgX, cp2SvgY := toSVGCoords(cp2AbsX, cp2AbsY, parentH, scaleX, scaleY)
 				d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
 					fmtPrec(cp1SvgX, o.Precision), fmtPrec(cp1SvgY, o.Precision),
 					fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
 					fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
-			} else if len(cps) == 1 {
+			} else if nurbsInfo != nil && len(nurbsInfo.cps) >= 3 {
+				// 3+ control points: create multiple cubic Bezier segments for S-curves.
+				// Convert all control points to absolute coordinates first.
+				absPoints := make([][2]float64, len(nurbsInfo.cps))
+				for i, cp := range nurbsInfo.cps {
+					if nurbsInfo.xType == 0 {
+						absPoints[i][0] = cp.x*ss.localW + ss.offsetX
+					} else {
+						absPoints[i][0] = cp.x + ss.offsetX
+					}
+					if nurbsInfo.yType == 0 {
+						absPoints[i][1] = cp.y*ss.localH + ss.offsetY
+					} else {
+						absPoints[i][1] = cp.y + ss.offsetY
+					}
+				}
+
+				// For 4 control points (common S-curve): use two cubic Beziers
+				// First half: start to midpoint using cp0, cp1
+				// Second half: midpoint to end using cp2, cp3
+				if len(absPoints) == 4 {
+					// Calculate midpoint between cp1 and cp2
+					midX := (absPoints[1][0] + absPoints[2][0]) / 2
+					midY := (absPoints[1][1] + absPoints[2][1]) / 2
+
+					// First cubic: prev → cp0 → cp1 → mid
+					cp0SvgX, cp0SvgY := toSVGCoords(absPoints[0][0], absPoints[0][1], parentH, scaleX, scaleY)
+					cp1SvgX, cp1SvgY := toSVGCoords(absPoints[1][0], absPoints[1][1], parentH, scaleX, scaleY)
+					midSvgX, midSvgY := toSVGCoords(midX, midY, parentH, scaleX, scaleY)
+					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
+						fmtPrec(cp0SvgX, o.Precision), fmtPrec(cp0SvgY, o.Precision),
+						fmtPrec(cp1SvgX, o.Precision), fmtPrec(cp1SvgY, o.Precision),
+						fmtPrec(midSvgX, o.Precision), fmtPrec(midSvgY, o.Precision)))
+
+					// Second cubic: mid → cp2 → cp3 → end
+					cp2SvgX, cp2SvgY := toSVGCoords(absPoints[2][0], absPoints[2][1], parentH, scaleX, scaleY)
+					cp3SvgX, cp3SvgY := toSVGCoords(absPoints[3][0], absPoints[3][1], parentH, scaleX, scaleY)
+					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
+						fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
+						fmtPrec(cp3SvgX, o.Precision), fmtPrec(cp3SvgY, o.Precision),
+						fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
+				} else {
+					// For 3 or 5+ points: use first and last two as control points
+					cp1SvgX, cp1SvgY := toSVGCoords(absPoints[0][0], absPoints[0][1], parentH, scaleX, scaleY)
+					lastIdx := len(absPoints) - 1
+					cp2SvgX, cp2SvgY := toSVGCoords(absPoints[lastIdx][0], absPoints[lastIdx][1], parentH, scaleX, scaleY)
+					d.WriteString(fmt.Sprintf("C%s %s %s %s %s %s",
+						fmtPrec(cp1SvgX, o.Precision), fmtPrec(cp1SvgY, o.Precision),
+						fmtPrec(cp2SvgX, o.Precision), fmtPrec(cp2SvgY, o.Precision),
+						fmtPrec(svgX, o.Precision), fmtPrec(svgY, o.Precision)))
+				}
+			} else if nurbsInfo != nil && len(nurbsInfo.cps) == 1 {
 				// Degree 2, 1 control point → quadratic Bezier.
-				cpAbsX := cps[0].x*ss.localW + ss.offsetX
-				cpAbsY := cps[0].y*ss.localH + ss.offsetY
+				var cpAbsX, cpAbsY float64
+				if nurbsInfo.xType == 0 {
+					cpAbsX = nurbsInfo.cps[0].x*ss.localW + ss.offsetX
+				} else {
+					cpAbsX = nurbsInfo.cps[0].x + ss.offsetX
+				}
+				if nurbsInfo.yType == 0 {
+					cpAbsY = nurbsInfo.cps[0].y*ss.localH + ss.offsetY
+				} else {
+					cpAbsY = nurbsInfo.cps[0].y + ss.offsetY
+				}
 				cpSvgX, cpSvgY := toSVGCoords(cpAbsX, cpAbsY, parentH, scaleX, scaleY)
 				d.WriteString(fmt.Sprintf("Q%s %s %s %s",
 					fmtPrec(cpSvgX, o.Precision), fmtPrec(cpSvgY, o.Precision),
@@ -786,6 +1135,22 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 	fill := resolveColor(s.FillColor())
 	stroke := resolveColor(s.LineColor())
 	lineWeight := s.LineWeight()
+
+	// Resolve themed line color for connectors and shapes without explicit LineColor.
+	// Connectors (shapes with BeginX/EndX) typically use theme's Accent1 color.
+	if stroke == "" {
+		// Try QuickStyle color first
+		if qsColor := s.QuickStyleLineColor(); qsColor != "" {
+			stroke = qsColor
+		} else if s.CellValue("BeginX") != "" {
+			// Connector shape - use theme Accent1 as default
+			if vis := s.Page.vis; vis != nil {
+				if theme := vis.Theme(); theme != nil && theme.Colors.Accent1 != "" {
+					stroke = theme.Colors.Accent1
+				}
+			}
+		}
+	}
 	var styleAttrs []string
 	var gradientID string
 
@@ -810,14 +1175,32 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 		if noFill || fill == "" || fillPattern == "0" {
 			fill = "none"
 		}
+
+		// For multi-geometry shapes (like icon shapes with background + foreground),
+		// secondary geometries often represent circular backgrounds that should be white
+		// to contrast with the colored background rectangle. This handles cases like
+		// Azure Web Role where the globe circle (geometry 1) should be white.
+		if ss.totalGeoms > 1 && ss.geomIndex > 0 && fill != "none" && fill != "" && isDarkColor(fill) {
+			fill = "#FFFFFF"
+			// Use the original fill color as stroke for better definition
+			if stroke == "" || stroke == "none" || !isDarkColor(stroke) {
+				stroke = resolveColor(s.FillColor())
+			}
+		}
 	}
 
 	// LinePattern=0 means "no line" regardless of other line properties.
-	// Empty LineColor means no explicit line was set — don't invent one.
 	linePattern := s.CellValue("LinePattern")
 	linePatternInt := int(toFloat(linePattern))
-	if noLine || linePattern == "0" || stroke == "" {
+	if noLine || linePattern == "0" {
 		stroke = "none"
+	} else if isEllipseOnly && fill != "none" && fill != "" {
+		// For ellipse-only geometries (e.g., cylinder top lid), use a white stroke
+		// to create the 3D highlight effect that Visio renders around the ellipse.
+		stroke = "#FFFFFF"
+	} else if stroke == "" {
+		// Default to black stroke when no explicit color is set (Visio default behavior)
+		stroke = "#000000"
 	}
 
 	// Track colors for brand detection.
@@ -832,6 +1215,13 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 	strokeWidth := lineWeight * ((scaleX + scaleY) / 2)
 	if strokeWidth <= 0 && stroke != "none" {
 		strokeWidth = 1
+	}
+	// For ellipse-only shapes (cylinder caps), ensure the white highlight stroke is visible.
+	if isEllipseOnly && stroke == "#FFFFFF" {
+		minHighlightWidth := 2.0 // 2 SVG units for visible highlight
+		if strokeWidth < minHighlightWidth {
+			strokeWidth = minHighlightWidth
+		}
 	}
 
 	// Fill opacity.
@@ -857,6 +1247,20 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 	endArrow := int(toFloat(s.CellValue("EndArrow")))
 	beginArrowSize := int(toFloat(s.CellValue("BeginArrowSize")))
 	endArrowSize := int(toFloat(s.CellValue("EndArrowSize")))
+
+	// Default arrows for connector shapes. Visio themes typically apply end arrows to connectors.
+	isConnector := fill == "none" && s.CellValue("BeginX") != ""
+	if isConnector && endArrow == 0 {
+		endArrow = 13 // Filled triangle arrow
+	}
+
+	// Default to medium size (2) for consistent appearance.
+	if beginArrow > 0 && beginArrowSize == 0 {
+		beginArrowSize = 2
+	}
+	if endArrow > 0 && endArrowSize == 0 {
+		endArrowSize = 2
+	}
 
 	if stroke != "none" && beginArrow > 0 {
 		key := arrowMarkerKey(beginArrow, beginArrowSize, stroke, false)
@@ -895,6 +1299,26 @@ func renderSubShapeInternal(ss renderableShape, parent *Shape, scaleX, scaleY fl
 		extraAttrs = " " + strings.Join(styleAttrs, " ")
 	}
 
+	// With refX=0, arrow back is at attachment point and tip extends forward.
+	// Shorten path so line ends before arrow, arrow tip reaches original endpoint.
+	// Arrow length in pixels = markerWidth * strokeWidth (since markerUnits=strokeWidth)
+	if beginArrow > 0 && pathData != "" {
+		sizeMult := 1.0
+		if beginArrowSize >= 0 && beginArrowSize < len(arrowSizeMultipliers) {
+			sizeMult = arrowSizeMultipliers[beginArrowSize]
+		}
+		arrowLen := 10 * sizeMult * 0.4 * strokeWidth
+		pathData = shortenPathStart(pathData, arrowLen, o.Precision)
+	}
+	if endArrow > 0 && pathData != "" {
+		sizeMult := 1.0
+		if endArrowSize >= 0 && endArrowSize < len(arrowSizeMultipliers) {
+			sizeMult = arrowSizeMultipliers[endArrowSize]
+		}
+		arrowLen := 10 * sizeMult * 0.4 * strokeWidth
+		pathData = shortenPathEnd(pathData, arrowLen, o.Precision)
+	}
+
 	return svgRenderResult{
 		pathSVG:     fmt.Sprintf(`  <path d="%s" fill="%s" stroke="%s" stroke-width="%s"%s/>`, pathData, fill, stroke, fmtPrec(strokeWidth, o.Precision), extraAttrs),
 		strokeWidth: strokeWidth,
@@ -913,6 +1337,96 @@ func toSVGCoords(visioX, visioY, parentHeight, scaleX, scaleY float64) (float64,
 	svgX := visioX * scaleX
 	svgY := (parentHeight - visioY) * scaleY
 	return svgX, svgY
+}
+
+// ellipticalArcToSVG converts a Visio EllipticalArcTo to an SVG arc command.
+// Parameters are in Visio coordinates (Y-up). The function handles coordinate
+// transformation to SVG (Y-down).
+// aspectRatio is major axis / minor axis (from Visio D cell).
+// rotAngleDeg is the rotation of the major axis in degrees (from Visio C cell).
+func ellipticalArcToSVG(startX, startY, cpX, cpY, endX, endY, aspectRatio, rotAngleDeg, scaleX, scaleY, parentH, offsetX, offsetY float64, precision int) string {
+	// Convert all points to SVG coordinates
+	svgStartX := (startX + offsetX) * scaleX
+	svgStartY := (parentH - startY - offsetY) * scaleY
+	svgEndX := (endX + offsetX) * scaleX
+	svgEndY := (parentH - endY - offsetY) * scaleY
+	svgCpX := (cpX + offsetX) * scaleX
+	svgCpY := (parentH - cpY - offsetY) * scaleY
+
+	// Calculate chord from start to end
+	dx := svgEndX - svgStartX
+	dy := svgEndY - svgStartY
+	chordLen := math.Sqrt(dx*dx + dy*dy)
+	if chordLen < 1e-10 {
+		return ""
+	}
+
+	// Calculate distance from control point to chord midpoint
+	midX := (svgStartX + svgEndX) / 2
+	midY := (svgStartY + svgEndY) / 2
+	cpDx := svgCpX - midX
+	cpDy := svgCpY - midY
+	bow := math.Sqrt(cpDx*cpDx + cpDy*cpDy)
+
+	// Determine sweep direction based on which side of the chord the control point is
+	// Cross product of chord vector and (start -> control point) vector
+	// In SVG, sweep=0 is counter-clockwise, sweep=1 is clockwise
+	// For an arc from left to right:
+	//   - sweep=1 (clockwise) curves UP (toward smaller Y)
+	//   - sweep=0 (counter-clockwise) curves DOWN (toward larger Y)
+	// We want the arc to curve TOWARD the control point
+	cross := dx*(svgCpY-svgStartY) - dy*(svgCpX-svgStartX)
+	sweep := 1
+	if cross > 0 {
+		// Control point is below the chord (larger Y in SVG), curve down toward it
+		sweep = 0
+	}
+
+	// If control point is on the chord (bow ~= 0), draw a line
+	if bow < 1e-6 {
+		return fmt.Sprintf("L%s %s", fmtPrec(svgEndX, precision), fmtPrec(svgEndY, precision))
+	}
+
+	// aspectRatio = major axis / minor axis
+	// For a horizontal ellipse (rotation = 0), the major axis is horizontal (rx)
+	if aspectRatio <= 0 {
+		aspectRatio = 1.0
+	}
+
+	// Calculate radii based on bow height and aspect ratio.
+	// The bow is how far the arc curves away from the chord.
+	// For an elliptical arc, ry (minor radius) relates to the bow height.
+	// We use the bow as a basis for ry, scaled to produce a visible curve.
+	//
+	// For the arc to pass through the control point while spanning the chord:
+	// - ry should be approximately equal to bow (for small arcs)
+	// - rx = ry * aspectRatio
+	//
+	// However, rx must be at least half the chord length to span the endpoints.
+	var rx, ry float64
+	minRx := chordLen / 2
+
+	// Start with ry based on bow height
+	ry = bow
+	rx = ry * aspectRatio
+
+	// If rx is too small to span the chord, scale up both radii proportionally
+	if rx < minRx {
+		scale := minRx / rx * 1.01 // slightly larger to ensure valid arc
+		rx = rx * scale
+		ry = ry * scale
+	}
+
+	// Large arc flag: if bow is greater than the minor radius, we're drawing more than half the ellipse
+	largeArc := 0
+	if bow > ry {
+		largeArc = 1
+	}
+
+	return fmt.Sprintf("A%s %s %s %d %d %s %s",
+		fmtPrec(rx, precision), fmtPrec(ry, precision),
+		fmtPrec(rotAngleDeg, precision), largeArc, sweep,
+		fmtPrec(svgEndX, precision), fmtPrec(svgEndY, precision))
 }
 
 // arcToSVG converts a Visio ArcTo (with bow) to an SVG arc command.
@@ -1036,6 +1550,37 @@ func resolveColor(c string) string {
 
 	// Visio theme reference (e.g., "Themed") — cannot resolve without theme data
 	return ""
+}
+
+// lightenColor returns a lighter version of a hex color by mixing with white.
+// factor: 0.0 = original color, 1.0 = white. Typical use: 0.2-0.4 for subtle lightening.
+func lightenColor(c string, factor float64) string {
+	if !strings.HasPrefix(c, "#") || len(c) < 7 {
+		return c
+	}
+	r, g, b := 0, 0, 0
+	fmt.Sscanf(c, "#%02X%02X%02X", &r, &g, &b)
+	// Mix with white (255, 255, 255)
+	r = int(float64(r) + (255-float64(r))*factor)
+	g = int(float64(g) + (255-float64(g))*factor)
+	b = int(float64(b) + (255-float64(b))*factor)
+	return fmt.Sprintf("#%02X%02X%02X", clamp(r), clamp(g), clamp(b))
+}
+
+// isDarkColor returns true if the given color is dark (low luminance).
+// Used to determine if white text should be used for contrast.
+func isDarkColor(c string) bool {
+	if !strings.HasPrefix(c, "#") || len(c) < 7 {
+		return false
+	}
+	// Parse hex color
+	r, g, b := 0, 0, 0
+	fmt.Sscanf(c, "#%02X%02X%02X", &r, &g, &b)
+	// Calculate relative luminance (simplified)
+	// Using sRGB luminance formula: 0.2126*R + 0.7152*G + 0.0722*B
+	luminance := 0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)
+	// If luminance is below 128, consider it dark
+	return luminance < 128
 }
 
 // visioColorPalette maps Visio indexed colors (0-23) to hex values.
@@ -1169,10 +1714,17 @@ type nurbsControlPoint struct {
 	x, y float64
 }
 
-// parseNURBSControlPoints extracts interior control points from a NURBS() formula string.
+// nurbsData holds parsed NURBS formula data including coordinate type flags.
+type nurbsData struct {
+	xType int                 // 0 = proportional (0-1), 1 = absolute (inches)
+	yType int                 // 0 = proportional (0-1), 1 = absolute (inches)
+	cps   []nurbsControlPoint // interior control points
+}
+
+// parseNURBSData extracts data from a NURBS() formula string.
 // Format: NURBS(knotLast, degree, xType, yType, x1,y1,knot1,weight1, x2,y2,knot2,weight2, ...)
-// Returns the (x,y) pairs of interior control points.
-func parseNURBSControlPoints(formula string) []nurbsControlPoint {
+// Returns the coordinate types and (x,y) pairs of interior control points.
+func parseNURBSData(formula string) *nurbsData {
 	// Strip "NURBS(" prefix and ")" suffix.
 	formula = strings.TrimSpace(formula)
 	upper := strings.ToUpper(formula)
@@ -1192,6 +1744,10 @@ func parseNURBSControlPoints(formula string) []nurbsControlPoint {
 		return nil
 	}
 
+	// Parse header: knotLast (index 0), degree (index 1), xType (index 2), yType (index 3)
+	xType := int(toFloat(parts[2]))
+	yType := int(toFloat(parts[3]))
+
 	// Control points start at index 4, in groups of 4: x, y, knot, weight.
 	var cps []nurbsControlPoint
 	for i := 4; i+3 < len(parts); i += 4 {
@@ -1199,7 +1755,19 @@ func parseNURBSControlPoints(formula string) []nurbsControlPoint {
 		y := toFloat(parts[i+1])
 		cps = append(cps, nurbsControlPoint{x: x, y: y})
 	}
-	return cps
+	return &nurbsData{xType: xType, yType: yType, cps: cps}
+}
+
+// parseNURBSControlPoints extracts interior control points from a NURBS() formula string.
+// Format: NURBS(knotLast, degree, xType, yType, x1,y1,knot1,weight1, x2,y2,knot2,weight2, ...)
+// Returns the (x,y) pairs of interior control points.
+// Note: This ignores xType/yType. Use parseNURBSData for full coordinate handling.
+func parseNURBSControlPoints(formula string) []nurbsControlPoint {
+	data := parseNURBSData(formula)
+	if data == nil {
+		return nil
+	}
+	return data.cps
 }
 
 // polylinePoint represents a vertex in a polyline.
@@ -1275,6 +1843,229 @@ func fmtPrec(v float64, prec int) string {
 		s = strings.TrimRight(s, ".")
 	}
 	return s
+}
+
+// shortenPathEnd shortens an SVG path at the end by the given length.
+// This is used to prevent connector lines from extending through arrowheads.
+func shortenPathEnd(pathData string, shortenBy float64, precision int) string {
+	if shortenBy <= 0 {
+		return pathData
+	}
+
+	// Find the last command and its coordinates
+	// We handle the common cases: L (lineto) and C (cubic bezier)
+	pathData = strings.TrimSpace(pathData)
+	if pathData == "" {
+		return pathData
+	}
+
+	// Find the last command by scanning backwards
+	lastCmdIdx := -1
+	for i := len(pathData) - 1; i >= 0; i-- {
+		c := pathData[i]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+			lastCmdIdx = i
+			break
+		}
+	}
+	if lastCmdIdx < 0 {
+		return pathData
+	}
+
+	cmd := pathData[lastCmdIdx]
+	args := strings.TrimSpace(pathData[lastCmdIdx+1:])
+	prefix := pathData[:lastCmdIdx]
+
+	// Parse coordinates from the last command
+	parts := strings.Fields(args)
+
+	switch cmd {
+	case 'L': // LineTo: L x y
+		if len(parts) < 2 {
+			return pathData
+		}
+		endX, _ := strconv.ParseFloat(parts[len(parts)-2], 64)
+		endY, _ := strconv.ParseFloat(parts[len(parts)-1], 64)
+
+		// Find previous point by looking for the second-to-last coordinate pair
+		prevX, prevY := findPrevPoint(prefix)
+
+		// Calculate direction and shorten
+		dx := endX - prevX
+		dy := endY - prevY
+		length := math.Sqrt(dx*dx + dy*dy)
+		if length > shortenBy {
+			ratio := (length - shortenBy) / length
+			newX := prevX + dx*ratio
+			newY := prevY + dy*ratio
+			return prefix + fmt.Sprintf("L%s %s", fmtPrec(newX, precision), fmtPrec(newY, precision))
+		}
+
+	case 'C': // Cubic Bezier: C cp1x cp1y cp2x cp2y x y
+		if len(parts) < 6 {
+			return pathData
+		}
+		cp2X, _ := strconv.ParseFloat(parts[len(parts)-4], 64)
+		cp2Y, _ := strconv.ParseFloat(parts[len(parts)-3], 64)
+		endX, _ := strconv.ParseFloat(parts[len(parts)-2], 64)
+		endY, _ := strconv.ParseFloat(parts[len(parts)-1], 64)
+
+		// Direction at end is from cp2 to end
+		dx := endX - cp2X
+		dy := endY - cp2Y
+		length := math.Sqrt(dx*dx + dy*dy)
+		if length > 0.001 {
+			// Shorten along the tangent direction
+			ratio := shortenBy / length
+			newEndX := endX - dx*ratio
+			newEndY := endY - dy*ratio
+			// Also adjust cp2 slightly to maintain curve shape
+			newCp2X := cp2X - dx*ratio*0.3
+			newCp2Y := cp2Y - dy*ratio*0.3
+
+			// Rebuild the C command with adjusted coordinates
+			newArgs := fmt.Sprintf("%s %s %s %s %s %s",
+				parts[0], parts[1], // cp1 unchanged
+				fmtPrec(newCp2X, precision), fmtPrec(newCp2Y, precision),
+				fmtPrec(newEndX, precision), fmtPrec(newEndY, precision))
+			return prefix + "C" + newArgs
+		}
+	}
+
+	return pathData
+}
+
+// shortenPathStart shortens an SVG path at the beginning by the given length.
+// This is used to prevent connector lines from extending through start arrowheads.
+func shortenPathStart(pathData string, shortenBy float64, precision int) string {
+	if shortenBy <= 0 {
+		return pathData
+	}
+
+	pathData = strings.TrimSpace(pathData)
+	if pathData == "" || len(pathData) < 2 {
+		return pathData
+	}
+
+	// Find the M (moveto) command which starts the path
+	if pathData[0] != 'M' && pathData[0] != 'm' {
+		return pathData
+	}
+
+	// Find where the M command's arguments end (at the next command)
+	nextCmdIdx := -1
+	for i := 1; i < len(pathData); i++ {
+		c := pathData[i]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+			nextCmdIdx = i
+			break
+		}
+	}
+	if nextCmdIdx < 0 {
+		return pathData
+	}
+
+	// Parse M command coordinates
+	mArgs := strings.TrimSpace(pathData[1:nextCmdIdx])
+	mParts := strings.Fields(mArgs)
+	if len(mParts) < 2 {
+		return pathData
+	}
+	startX, _ := strconv.ParseFloat(mParts[0], 64)
+	startY, _ := strconv.ParseFloat(mParts[1], 64)
+
+	suffix := pathData[nextCmdIdx:]
+	nextCmd := suffix[0]
+
+	switch nextCmd {
+	case 'L': // LineTo: find the endpoint and shorten towards it
+		args := strings.TrimSpace(suffix[1:])
+		// Find next command
+		endIdx := len(args)
+		for i := 0; i < len(args); i++ {
+			c := args[i]
+			if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+				endIdx = i
+				break
+			}
+		}
+		lParts := strings.Fields(args[:endIdx])
+		if len(lParts) >= 2 {
+			endX, _ := strconv.ParseFloat(lParts[0], 64)
+			endY, _ := strconv.ParseFloat(lParts[1], 64)
+
+			dx := endX - startX
+			dy := endY - startY
+			length := math.Sqrt(dx*dx + dy*dy)
+			if length > shortenBy {
+				ratio := shortenBy / length
+				newStartX := startX + dx*ratio
+				newStartY := startY + dy*ratio
+				return fmt.Sprintf("M%s %s%s", fmtPrec(newStartX, precision), fmtPrec(newStartY, precision), suffix)
+			}
+		}
+
+	case 'C': // Cubic Bezier: C cp1x cp1y cp2x cp2y x y
+		args := strings.TrimSpace(suffix[1:])
+		endIdx := len(args)
+		for i := 0; i < len(args); i++ {
+			c := args[i]
+			if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+				endIdx = i
+				break
+			}
+		}
+		cParts := strings.Fields(args[:endIdx])
+		if len(cParts) >= 6 {
+			cp1X, _ := strconv.ParseFloat(cParts[0], 64)
+			cp1Y, _ := strconv.ParseFloat(cParts[1], 64)
+
+			// Direction at start is from start to cp1
+			dx := cp1X - startX
+			dy := cp1Y - startY
+			length := math.Sqrt(dx*dx + dy*dy)
+			if length > 0.001 {
+				ratio := shortenBy / length
+				newStartX := startX + dx*ratio
+				newStartY := startY + dy*ratio
+				// Adjust cp1 slightly to maintain curve shape
+				newCp1X := cp1X + dx*ratio*0.3
+				newCp1Y := cp1Y + dy*ratio*0.3
+
+				// Rebuild path with new start point and adjusted cp1
+				restArgs := strings.Join(cParts[2:], " ")
+				return fmt.Sprintf("M%s %sC%s %s %s",
+					fmtPrec(newStartX, precision), fmtPrec(newStartY, precision),
+					fmtPrec(newCp1X, precision), fmtPrec(newCp1Y, precision),
+					restArgs) + args[endIdx:]
+			}
+		}
+	}
+
+	return pathData
+}
+
+// findPrevPoint finds the last coordinate pair before the final command in a path.
+func findPrevPoint(pathPrefix string) (float64, float64) {
+	// Extract all numbers from the path
+	parts := strings.Fields(pathPrefix)
+	var nums []float64
+	for _, p := range parts {
+		// Skip command letters
+		p = strings.TrimLeft(p, "MmLlCcSsQqTtAaHhVvZz")
+		if p == "" {
+			continue
+		}
+		if v, err := strconv.ParseFloat(p, 64); err == nil {
+			nums = append(nums, v)
+		}
+	}
+
+	// Last two numbers are the previous point
+	if len(nums) >= 2 {
+		return nums[len(nums)-2], nums[len(nums)-1]
+	}
+	return 0, 0
 }
 
 // ForeignImage contains embedded image data extracted from a Foreign-type shape.
