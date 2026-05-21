@@ -430,8 +430,7 @@ func renderGeometry(shape *vsdx.Shape, scale float64, prec int) string {
 						fmtPrec(cx+rx, prec), fmtPrec(cy, prec)))
 				}
 			case "EllipticalArcTo", "RelEllipticalArcTo":
-				// EllipticalArcTo: X,Y = end point, A,B = control point, C = rotation, D = aspect ratio
-				// Simplified - draw as an elliptical arc
+				// EllipticalArcTo: X,Y = end point, A,B = control point, C = rotation, D = aspect ratio (rx/ry)
 				endX := x
 				endY := y
 				cpX := cellFloat(row, "A") * scale
@@ -441,7 +440,6 @@ func renderGeometry(shape *vsdx.Shape, scale float64, prec int) string {
 					aspectRatio = 1
 				}
 				// Calculate arc parameters from control point
-				// Use midpoint and control point to estimate radius
 				midX := (prevX + endX) / 2
 				midY := (prevY + endY) / 2
 				dx := cpX - midX
@@ -451,20 +449,22 @@ func renderGeometry(shape *vsdx.Shape, scale float64, prec int) string {
 					// Control point at midpoint - straight line
 					pathD.WriteString(fmt.Sprintf("L%s %s ", fmtPrec(endX, prec), fmtPrec(endY, prec)))
 				} else {
-					// Calculate radius from geometry
+					// Calculate radii from chord length and aspect ratio
+					// Chord is the horizontal span, rx = chord/2, ry = rx/aspectRatio
 					chordLen := math.Sqrt((endX-prevX)*(endX-prevX) + (endY-prevY)*(endY-prevY))
-					ry := chordLen / 2
-					rx := ry * aspectRatio
+					rx := chordLen / 2
+					ry := rx / aspectRatio // aspectRatio = rx/ry, so ry = rx/aspectRatio
 					if rx > 0 && ry > 0 {
 						// Determine sweep direction based on control point position
-						// Cross product to determine which side of chord the control point is on
 						cross := (endX-prevX)*(cpY-prevY) - (endY-prevY)*(cpX-prevX)
 						sweep := 0
 						if cross < 0 {
 							sweep = 1
 						}
-						pathD.WriteString(fmt.Sprintf("A%s %s 0 0 %d %s %s ",
-							fmtPrec(rx, prec), fmtPrec(ry, prec), sweep,
+						// Use large-arc flag = 1 for semicircle caps
+						largeArc := 1
+						pathD.WriteString(fmt.Sprintf("A%s %s 0 %d %d %s %s ",
+							fmtPrec(rx, prec), fmtPrec(ry, prec), largeArc, sweep,
 							fmtPrec(endX, prec), fmtPrec(endY, prec)))
 					} else {
 						pathD.WriteString(fmt.Sprintf("L%s %s ", fmtPrec(endX, prec), fmtPrec(endY, prec)))
@@ -660,6 +660,42 @@ func renderGeometryShadow(shape *vsdx.Shape, scale float64, prec int) string {
 					pathD.WriteString(fmt.Sprintf("L%s %s ", fmtPrec(x, prec), fmtPrec(y, prec)))
 				}
 				prevX, prevY = x, y
+			case "EllipticalArcTo", "RelEllipticalArcTo":
+				// Same calculation as main geometry rendering
+				endX := x
+				endY := y
+				cpX := cellFloat(row, "A") * scale
+				cpY := (height - cellFloat(row, "B")) * scale
+				aspectRatio := cellFloat(row, "D")
+				if aspectRatio == 0 {
+					aspectRatio = 1
+				}
+				midX := (prevX + endX) / 2
+				midY := (prevY + endY) / 2
+				dx := cpX - midX
+				dy := cpY - midY
+				dist := math.Sqrt(dx*dx + dy*dy)
+				if dist < 0.01 {
+					pathD.WriteString(fmt.Sprintf("L%s %s ", fmtPrec(endX, prec), fmtPrec(endY, prec)))
+				} else {
+					chordLen := math.Sqrt((endX-prevX)*(endX-prevX) + (endY-prevY)*(endY-prevY))
+					rx := chordLen / 2
+					ry := rx / aspectRatio
+					if rx > 0 && ry > 0 {
+						cross := (endX-prevX)*(cpY-prevY) - (endY-prevY)*(cpX-prevX)
+						sweep := 0
+						if cross < 0 {
+							sweep = 1
+						}
+						largeArc := 1
+						pathD.WriteString(fmt.Sprintf("A%s %s 0 %d %d %s %s ",
+							fmtPrec(rx, prec), fmtPrec(ry, prec), largeArc, sweep,
+							fmtPrec(endX, prec), fmtPrec(endY, prec)))
+					} else {
+						pathD.WriteString(fmt.Sprintf("L%s %s ", fmtPrec(endX, prec), fmtPrec(endY, prec)))
+					}
+				}
+				prevX, prevY = endX, endY
 			case "Ellipse":
 				cx := row.X() * scale
 				cy := (height - row.Y()) * scale
