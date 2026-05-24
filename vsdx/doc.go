@@ -1,4 +1,4 @@
-// Package vsdx provides reading, editing, and writing of Microsoft Visio (.vsdx) files.
+// Package vsdx provides reading, editing, writing, and SVG rendering of Microsoft Visio (.vsdx) files.
 //
 // A .vsdx file is a ZIP archive containing XML files that define pages, shapes,
 // masters, and their relationships. This package handles the ZIP/XML plumbing
@@ -28,6 +28,19 @@
 //	shape.SetText("Database")
 //	shape.SetX(5.0)
 //	shape.SetFillColor("#00ff00")
+//
+// # SVG Rendering
+//
+// Render pages or shapes to SVG with high fidelity:
+//
+//	svg := page.ToSVG(&vsdx.SVGOptions{
+//	    Precision: 2,
+//	    Scale:     96.0,  // DPI
+//	})
+//
+// Rendering supports geometry (rectangles, ellipses, arcs, NURBS curves converted to Bezier),
+// connectors with proper arrow sizing, 24 line patterns, gradients, text positioning,
+// and hierarchical transforms for nested shape groups.
 //
 // # Connectors
 //

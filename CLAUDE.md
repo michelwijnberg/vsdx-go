@@ -14,18 +14,25 @@ vsdx-go/
 │   │── # Core types
 │   ├── vsdxfile.go             # VisioFile: Open/Close/Save, page management, doc props (1525 lines)
 │   ├── page.go                 # Page: shapes, search, connects, dimensions, layers, backgrounds (565 lines)
-│   ├── shape.go                # Shape: positie, tekst, stijl, cellen, hiërarchie, 3D effects (2051 lines)
+│   ├── shape.go                # Shape: positie, tekst, stijl, cellen, hiërarchie, 3D effects (2064 lines)
 │   ├── cell.go                 # Cell: name/value/formula/unit/error (84 lines)
 │   ├── connect.go              # Connect: from/to shape relaties (52 lines)
 │   ├── data_property.go        # DataProperty: custom shape properties met master inheritance (123 lines)
 │   │
 │   │── # Geometry
 │   ├── geometry.go             # Geometry, GeometryRow, GeometryCell: shape paden + builders (543 lines)
+│   ├── geometry_resolve.go     # GeometryResolver: NURBS→Bezier, arc conversie, arrow setbacks (1121 lines)
 │   │
 │   │── # SVG Rendering
-│   ├── svg.go                  # ShapeToSVG: SVG rendering met arrows, text, line patterns (1522 lines)
-│   ├── gradient.go             # Gradient: fill gradients voor shapes (175 lines)
-│   ├── shadow.go               # Shadow: drop shadow effecten (116 lines)
+│   ├── svg.go                  # ShapeToSVG: hoofd SVG renderer met arrows, text, line patterns (2510 lines)
+│   ├── svg_emit.go             # SVG emitter: clean SVG generatie met marker definitions (487 lines)
+│   ├── svg_parse.go            # SVG parser: element extractie voor vergelijking (92 lines)
+│   ├── render_tree.go          # RenderTree: hiërarchische render tree met transform propagatie (721 lines)
+│   ├── render_validate.go      # RenderValidator: transforms, connectors, z-order validatie (322 lines)
+│   ├── transform.go            # Transform: 2D affine transformaties en matrix operaties (270 lines)
+│   ├── gradient.go             # Gradient: fill gradients voor shapes (181 lines)
+│   ├── shadow.go               # Shadow: drop shadow effecten (124 lines)
+│   ├── effective_style.go      # EffectiveStyle: computed style met theme/master inheritance (331 lines)
 │   │
 │   │── # Features
 │   ├── foreign.go              # AddImage, AddShape, GroupShapes, SetForeignData (425 lines)
@@ -41,7 +48,7 @@ vsdx-go/
 │   ├── master.go               # CreateMaster, DeleteMaster, DuplicateMaster (305 lines)
 │   ├── stencil.go              # Stencil: .vssx stencil bestanden (357 lines)
 │   ├── theme.go                # Theme: document themes, effects, variants, QuickStyle (917 lines)
-│   ├── styles.go               # StyleSheet: style inheritance en toepassing (320 lines)
+│   ├── styles.go               # StyleSheet: style inheritance en toepassing (339 lines)
 │   │
 │   │── # Comments & Data Links
 │   ├── comments.go             # Comments: document/shape comments + authors (300 lines)
@@ -58,9 +65,17 @@ vsdx-go/
 │   │
 │   ├── vsdx_test.go            # 450+ test cases (7754 lines)
 │   ├── foreign_test.go         # 10 test cases (726 lines)
-│   └── svg_test.go             # 30+ test cases (671 lines)
+│   ├── svg_test.go             # 30+ test cases (671 lines)
+│   ├── svg_emit_test.go        # SVG emit tests (356 lines)
+│   ├── golden_test.go          # Golden file tests voor SVG rendering (393 lines)
+│   ├── transform_test.go       # Transform tests (185 lines)
+│   └── effective_style_test.go # Style tests (171 lines)
 │
-├── cmd/stencil-diag/main.go    # Diagnostic tool voor stencil bestanden
+├── cmd/render-compare/         # Vergelijkt library SVG met Visio golden exports
+├── cmd/render-audit/           # Validatie: transforms, connectors, z-order, arrows
+├── cmd/text-compare/           # Vergelijkt tekst posities tussen SVGs
+├── cmd/stencil-diag/           # Diagnostic tool voor stencil bestanden
+├── testdata/golden/            # Golden test fixtures voor SVG rendering
 ├── tests/                      # Test fixture .vsdx bestanden (15+ files)
 └── docs/MS-VSDX.pdf            # Microsoft VSDX format specificatie (468 pagina's)
 ```
@@ -109,6 +124,10 @@ Dit geldt voor cells, text, data properties, en geometry.
 | `DataProperty` | `data_property.go` | Custom properties met master inheritance |
 | `Connect` | `connect.go` | Verbinding tussen twee shapes |
 | `Geometry` | `geometry.go` | Shape pad-definitie + builders (MoveTo, LineTo, ArcTo, etc.) |
+| `GeometryResolver` | `geometry_resolve.go` | NURBS→Bezier conversie, arc→path, arrow setbacks |
+| `RenderTree` | `render_tree.go` | Hiërarchische shape tree met transform propagatie |
+| `EffectiveStyle` | `effective_style.go` | Computed style met theme/master/stylesheet inheritance |
+| `Transform` | `transform.go` | 2D affine transformatie matrix |
 | `Gradient` | `gradient.go` | Fill gradient met stops en angle |
 | `Shadow` | `shadow.go` | Drop shadow met offset, blur, kleur |
 | `Theme` | `theme.go` | Document theme met kleuren en fonts |
@@ -305,12 +324,17 @@ vsdx-svg/
 
 ## Huidige Status
 
-- 35 Go source bestanden, ~15,900 lines code + ~9,200 lines tests = ~25,100 total
-- 460 test cases (alle passing), ~90% code coverage
+- 46 Go source bestanden, ~21,000 lines code + ~10,300 lines tests = ~31,300 total
+- 490 test cases (alle passing), ~90% code coverage
 - **100% MS-VSDX spec coverage** (21 secties + 175 formule functies + volledige style/theme support)
 - Alle fasen compleet: lezen, navigatie, bewerken, schrijven, connectors, templating, diff
-- **Rendering features**: SVG met line patterns (24 types), arrow markers (45+ types), 
-  gradient fills (fill + line), drop shadows, text positioning, ellipse geometry
+- **SVG Rendering**:
+  - Line patterns (24 types), arrow markers (45+ types met markerUnits="strokeWidth")
+  - Gradient fills (fill + line), drop shadows, text positioning
+  - **NURBS/B-spline → Bezier conversie** voor accurate connector curves
+  - **Shape rotation** met proper coordinate transforms
+  - Render tree met hiërarchische transform propagatie
+  - Golden test framework voor regressie-detectie
 - **Authoring features**: master shapes aanmaken/verwijderen, stencils (.vssx), themes, variants
 - **Advanced features**: auto-routing connectors (A* pathfinding), PNG/PDF export,
   background pages, schema validation, error recovery, TheCel/Sheet.N! formula references

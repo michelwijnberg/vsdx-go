@@ -4,35 +4,57 @@ Dit document beschrijft alle uitbreidingen nodig om een professionele diagram-ap
 
 ## Huidige Status
 
-**Versie**: Post-coverage expansion (commit bb96235)
+**Versie**: Post-SVG rendering infrastructure (commit f549f75)
 
 | Metric | Waarde |
 |--------|--------|
-| Code coverage | 88.6% |
-| Test cases | 207 |
-| MS-VSDX sections | 15/17 |
-| Geometry row types | 14/15 |
-| Formula functies | 40+ |
+| Code coverage | ~90% |
+| Test cases | 490 |
+| Go source files | 46 |
+| Lines of code | ~21,000 + ~10,300 tests |
+| MS-VSDX sections | 21/21 |
+| Geometry row types | 15/15 |
+| Formula functies | 175+ |
 
 ### Wat werkt goed
 - Volledige .vsdx read/write cycle
 - Shape CRUD (create, read, update, delete)
 - Connectors met connection points
-- Text content en basis formatting
-- Kleuren (solid fills, line colors)
+- Text content en character/paragraph formatting
+- Kleuren (solid fills, line colors, gradients)
 - Layers, hyperlinks, data properties
-- SVG export (basis)
-- Formula evaluatie
+- **SVG rendering** (arrows, line patterns, NURBS→Bezier, transforms, rotation)
+- Formula evaluatie (175+ functies)
+- Themes, stylesheets, QuickStyles
+- Stencils (.vssx)
+- Comments, annotations, reviewers
+- Data links, recordsets
+
+### Fase 1: Rendering Completeness - VOLTOOID ✓
+
+De volgende rendering features zijn nu geïmplementeerd:
+
+| Feature | Status |
+|---------|--------|
+| Line patterns (24 types) | ✓ Voltooid |
+| Arrow markers (45+ types) | ✓ Voltooid (markerUnits="strokeWidth") |
+| Text block positioning | ✓ Voltooid |
+| Gradient fills | ✓ Voltooid |
+| Drop shadows | ✓ Voltooid |
+| NURBS/B-spline curves | ✓ Voltooid (B-spline→Bezier conversie) |
+| Shape rotation | ✓ Voltooid |
+| Hierarchical transforms | ✓ Voltooid (render tree) |
+| Golden test framework | ✓ Voltooid |
 
 ---
 
-## Fase 1: Rendering Completeness (P0)
+## Fase 1 (Historisch): Rendering Completeness (P0)
 
-**Doel**: SVG output die er professioneel uitziet
+**Status**: VOLTOOID
 
 ### 1.1 Line Patterns in SVG
 
-**Status**: We lezen/schrijven LinePattern, maar renderen niet in SVG
+**Status**: ✓ VOLTOOID - We renderen alle 24 line patterns in SVG
 
 **Locatie**: `vsdx/svg.go`
 

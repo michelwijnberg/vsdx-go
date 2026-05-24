@@ -55,39 +55,56 @@ func main() {
 vsdx-go/
 ├── go.mod
 ├── vsdx/                       # All library code in one package
-│   ├── doc.go                  # Package-level documentation (61 lines)
+│   ├── doc.go                  # Package-level documentation
 │   │
 │   │── # Core types
-│   ├── vsdxfile.go             # VisioFile: Open/Close/Save, page management (1234 lines)
-│   ├── page.go                 # Page: shapes, search, connects, dimensions, layers (476 lines)
-│   ├── shape.go                # Shape: position, text, style, cells, hierarchy, protection (1193 lines)
-│   ├── cell.go                 # Cell: name/value/formula triple (43 lines)
-│   ├── connect.go              # Connect: from/to shape relationships (52 lines)
-│   ├── data_property.go        # DataProperty: custom shape properties with master inheritance (123 lines)
+│   ├── vsdxfile.go             # VisioFile: Open/Close/Save, page management, doc props
+│   ├── page.go                 # Page: shapes, search, connects, dimensions, layers
+│   ├── shape.go                # Shape: position, text, style, cells, hierarchy
+│   ├── cell.go                 # Cell: name/value/formula/unit/error
+│   ├── connect.go              # Connect: from/to shape relationships
+│   ├── data_property.go        # DataProperty: custom shape properties with master inheritance
 │   │
 │   │── # Geometry
-│   ├── geometry.go             # Geometry, GeometryRow, GeometryCell: shape paths + builders (385 lines)
+│   ├── geometry.go             # Geometry, GeometryRow, GeometryCell: shape paths + builders
+│   ├── geometry_resolve.go     # GeometryResolver: NURBS→Bezier, arc conversion, arrow setbacks
+│   │
+│   │── # SVG Rendering
+│   ├── svg.go                  # ShapeToSVG: SVG rendering with arrows, text, line patterns
+│   ├── svg_emit.go             # SVG emitter: clean SVG generation with marker definitions
+│   ├── render_tree.go          # RenderTree: hierarchical render tree with transform propagation
+│   ├── transform.go            # Transform: 2D affine transformations and matrix operations
+│   ├── effective_style.go      # EffectiveStyle: computed style with theme/master inheritance
+│   ├── gradient.go             # Gradient: fill gradients for shapes
+│   ├── shadow.go               # Shadow: drop shadow effects
 │   │
 │   │── # Features
-│   ├── foreign.go              # AddImage, AddShape, GroupShapes, SetForeignData (421 lines)
-│   ├── template.go             # RenderTemplate: Jinja2-style directives (490 lines)
-│   ├── diff.go                 # VisioFileDiff: compare two .vsdx files (241 lines)
-│   ├── svg.go                  # ShapeToSVG: SVG rendering of shapes (893 lines)
-│   ├── media.go                # Media: embedded template shapes for connectors (67 lines)
-│   ├── formula.go              # CalcValue: formula evaluation (35 lines)
+│   ├── foreign.go              # AddImage, AddShape, GroupShapes, SetForeignData
+│   ├── template.go             # RenderTemplate: Jinja2-style directives
+│   ├── diff.go                 # VisioFileDiff: compare two .vsdx files
+│   ├── formula.go              # FormulaEvaluator: full formula evaluation
+│   ├── routing.go              # Router: A* pathfinding for auto-routing connectors
+│   ├── export.go               # ExportPNG, ExportPDF: raster/vector export
+│   ├── validate.go             # Validate: schema validation and error recovery
+│   │
+│   │── # Stencils & Masters
+│   ├── master.go               # CreateMaster, DeleteMaster, DuplicateMaster
+│   ├── stencil.go              # Stencil: .vssx stencil files
+│   ├── theme.go                # Theme: document themes, effects, variants, QuickStyle
+│   ├── styles.go               # StyleSheet: style inheritance and application
 │   │
 │   │── # Support
-│   ├── cellname.go             # CellName constants: 40+ cell definitions (83 lines)
-│   ├── errors.go               # Sentinel errors: ErrInvalidFileType, FileError (27 lines)
-│   ├── types.go                # Result structs: Point, Rect (11 lines)
-│   ├── namespace.go            # XML namespace constants (14 lines)
-│   ├── util.go                 # writeFile helper (15 lines)
+│   ├── cellname.go             # CellName constants: 70+ cell definitions
+│   ├── errors.go               # Sentinel errors: ErrInvalidFileType, FileError
+│   ├── types.go                # Result structs: Point, Rect
+│   ├── namespace.go            # XML namespace constants
 │   │
-│   ├── vsdx_test.go            # 124 test cases (3825 lines)
-│   ├── foreign_test.go         # 10 test cases (727 lines)
-│   └── svg_test.go             # 24 test cases (541 lines)
+│   └── *_test.go               # 490 test cases
 │
-├── cmd/stencil-diag/main.go    # Diagnostic tool for stencil files
+├── cmd/render-compare/         # Compare library SVG with Visio golden exports
+├── cmd/render-audit/           # Validate transforms, connectors, z-order, arrows
+├── cmd/text-compare/           # Compare text positions between SVGs
+├── testdata/golden/            # Golden test fixtures for SVG rendering
 └── tests/                      # Test fixture .vsdx files (15+ files)
 ```
 
@@ -381,7 +398,29 @@ XML parsing uses [github.com/beevik/etree](https://github.com/beevik/etree) for 
 go test ./vsdx/... -v
 ```
 
-158 test cases across 3 files, 85.9% code coverage. Test fixtures are `.vsdx` files in `tests/`.
+490 test cases across 10 test files, ~90% code coverage. Test fixtures are `.vsdx` files in `tests/` and golden SVGs in `testdata/golden/`.
+
+## SVG Rendering
+
+The library can render Visio shapes to SVG with high fidelity:
+
+```go
+page := vis.GetPage(0)
+svg := page.ToSVG(&vsdx.SVGOptions{
+    Precision: 2,
+    Scale:     96.0,  // DPI
+})
+```
+
+Rendering features:
+- **Geometry**: rectangles, ellipses, arcs, NURBS curves (converted to Bezier)
+- **Connectors**: proper B-spline to Bezier conversion, arrow setbacks
+- **Arrows**: 45+ marker types with correct sizing (markerUnits="strokeWidth")
+- **Line styles**: 24 dash patterns, line caps, rounded corners
+- **Fill styles**: solid, gradients, transparency
+- **Text**: positioned text blocks with character formatting
+- **Transforms**: rotation, scaling, hierarchical transform propagation
+- **Groups**: nested shape groups with correct coordinate transforms
 
 ## Credits
 
