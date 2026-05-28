@@ -347,25 +347,36 @@ func (e *SVGEmitter) emitMarker(m *MarkerDef) string {
 	// canonical path per type), with refX always at the body position.
 	orient := "auto"
 	pathStr := m.Path
-	isBackAnchored := m.RefX >= 9.5 // RefX=10 indicates back-anchored
-	if !m.IsEnd {
+	refX := m.RefX
+	isBackAnchored := m.RefX >= 9.5  // RefX=10 indicates back-anchored
+	isCentered := m.RefX > 0.5 && m.RefX < 9.5 // RefX≈5 indicates centered (circle/square)
+
+	if isCentered {
+		// Centered shapes (lend10, 11, 20, 21) are symmetric around viewBox 5.
+		// Visio offsets them by setback so the shape is mostly OFF the line area:
+		//   BEGIN: shape mostly behind line start (line begins after shape)
+		//   END:   shape mostly forward of line end (line ends before shape)
+		// In our viewBox 0..10 with the shape at center, refX should shift to the
+		// appropriate edge. For Setback=W/2 (always true for centered), the offset
+		// equals 5 viewBox units exactly. So begin → refX=10, end → refX=0.
+		if !m.IsEnd {
+			refX = 10
+		} else {
+			refX = 0
+		}
+	} else if !m.IsEnd {
 		if !isBackAnchored {
 			// A-type begin: flip via auto-start-reverse so apex lands at line start
 			orient = "auto-start-reverse"
 		} else {
 			// B-type begin: keep auto; path layout already puts body at viewBox left,
 			// apex/elements at viewBox right. Need refX=0 for body at line start.
-			// We override refX here for begin variant.
+			refX = 0
 		}
 	} else if isBackAnchored {
 		// B-type end: mirror path so body ends up at viewBox 10 (= refX) and
 		// apex/elements at viewBox 0 (= back into line area after auto orient).
 		pathStr = mirrorPathX(m.Path)
-	}
-	// Adjust refX for B-type begin
-	refX := m.RefX
-	if !m.IsEnd && isBackAnchored {
-		refX = 0
 	}
 
 	// preserveAspectRatio="none" lets the 10x10 path stretch to match
