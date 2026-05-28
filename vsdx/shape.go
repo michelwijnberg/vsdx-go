@@ -334,18 +334,26 @@ func (s *Shape) SetY(v float64)      { s.SetCellValue(CellPinY, fmtFloat(v)) }
 func (s *Shape) SetLocX(v float64)   { s.SetCellValue(CellLocPinX, fmtFloat(v)) }
 func (s *Shape) SetLocY(v float64)   { s.SetCellValue(CellLocPinY, fmtFloat(v)) }
 // SetWidth changes the shape's Width cell AND scales every absolute X
-// coordinate in its local geometry by the same factor. Without the scaling,
+// coordinate in its local geometry by the same factor — plus the LocPinX
+// cell so the shape's anchor moves with the resize. Without the scaling,
 // shapes whose geometry rows store absolute values (e.g. "MoveTo X=1.488")
 // keep rendering at their old width even after the Width cell changes —
 // because Visio normally re-evaluates the master's formulas to recompute
 // those values, and we don't run a ShapeSheet evaluator at render time.
+// Without the LocPin scaling, the rendered shape jumps sideways on resize
+// because the anchor offset stays at the OLD width's value while the
+// frontend assumes the pin tracks the bbox center.
 // Relative-coord rows (RelMoveTo etc.) are left alone; their stored fractions
 // already track the new width via the resolver's localW multiplication.
 func (s *Shape) SetWidth(v float64) {
 	old := s.Width()
 	s.SetCellValue(CellWidth, fmtFloat(v))
 	if old > 0 && v > 0 && v != old {
-		scaleGeometryAxis(s.Geometry, "X", v/old)
+		scale := v / old
+		scaleGeometryAxis(s.Geometry, "X", scale)
+		if loc := s.LocX(); loc != 0 {
+			s.SetLocX(loc * scale)
+		}
 	}
 }
 
@@ -359,6 +367,9 @@ func (s *Shape) SetHeight(v float64) {
 		ratio := absVal(v) / absVal(old)
 		if ratio != 1.0 {
 			scaleGeometryAxis(s.Geometry, "Y", ratio)
+			if loc := s.LocY(); loc != 0 {
+				s.SetLocY(loc * ratio)
+			}
 		}
 	}
 }
