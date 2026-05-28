@@ -96,7 +96,8 @@ var visioArrowTypes = map[int]ArrowDef{
 	5:  {Path: "M 0 9.998 L 10 5 L 0.094 0.035 C 1.641 3.178 1.635 6.862 0.077 10 z",                       W: 2.000, H: 2.000, RefX: 0, RefY: 5, Filled: true,  Setback: 1.700}, // lend5  filled swept-back
 	6:  {Path: "M 1.413 9.968 L 10 5 L 1.36 0 C 0 3.147 0 6.852 1.36 10 z",                                 W: 2.329, H: 2.013, RefX: 0, RefY: 5, Filled: true,  Setback: 2.200}, // lend6  filled swept-back (variant)
 	7:  {Path: "M 10 0 C 7.802 3.016 4.256 4.864 0.426 4.993 L 0.426 5.007 C 4.256 5.136 7.802 6.984 10 10", W: 1.843, H: 1.919, RefX: 0, RefY: 5, Filled: false, Setback: 0},     // lend7  S-curve fishtail
-	8:  {Path: "M 0 1 L 10 5 L 0 9",                                                                        W: 2.000, H: 2.000, RefX: 0, RefY: 5, Filled: false, Setback: 0},     // (gap in spec) thin open chevron
+	// Type 8 has no dedicated lend symbol — Visio maps it to lend5 (filled swept-back)
+	8:  {Path: "M 0 9.998 L 10 5 L 0.094 0.035 C 1.641 3.178 1.635 6.862 0.077 10 z",                       W: 2.000, H: 2.000, RefX: 0, RefY: 5, Filled: true,  Setback: 1.700}, // type 8 = lend5 alias
 	9:  {Path: "M 10 0 L 0 10",                                                                             W: 2.000, H: 2.000, RefX: 5, RefY: 5, Filled: false, Setback: 0},     // lend9  diagonal slash
 	10: {Path: "M 5 10 C 2.239 10 0 7.761 0 5 0 2.239 2.239 0 5 0 7.761 0 10 2.239 10 5 10 7.761 7.761 10 5 10 Z", W: 1.500, H: 1.500, RefX: 5, RefY: 5, Filled: true,  Setback: 0.750}, // lend10 filled circle
 	11: {Path: "M 10 0 L 10 10 L 0 10 L 0 0 L 10 0 z",                                                      W: 1.500, H: 1.500, RefX: 5, RefY: 5, Filled: true,  Setback: 0.750}, // lend11 filled square
