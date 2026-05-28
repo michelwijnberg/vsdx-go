@@ -342,6 +342,21 @@ func (s *Shape) SetBeginY(v float64) { s.SetCellValue(CellBeginY, fmtFloat(v)) }
 func (s *Shape) SetEndX(v float64)   { s.SetCellValue(CellEndX, fmtFloat(v)) }
 func (s *Shape) SetEndY(v float64)   { s.SetCellValue(CellEndY, fmtFloat(v)) }
 
+// SetMasterPageID sets (or clears) the shape's Master attribute and refreshes
+// the cached MasterPageID. Pass "" to detach from any master.
+func (s *Shape) SetMasterPageID(masterID string) {
+	if masterID == "" {
+		s.xml.RemoveAttr("Master")
+	} else {
+		if attr := s.xml.SelectAttr("Master"); attr != nil {
+			attr.Value = masterID
+		} else {
+			s.xml.CreateAttr("Master", masterID)
+		}
+	}
+	s.MasterPageID = masterID
+}
+
 // --- Style properties ---
 
 func (s *Shape) LineWeight() float64 { return toFloat(s.CellValue(CellLineWeight)) }
