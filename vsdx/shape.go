@@ -333,8 +333,67 @@ func (s *Shape) SetX(v float64)      { s.SetCellValue(CellPinX, fmtFloat(v)) }
 func (s *Shape) SetY(v float64)      { s.SetCellValue(CellPinY, fmtFloat(v)) }
 func (s *Shape) SetLocX(v float64)   { s.SetCellValue(CellLocPinX, fmtFloat(v)) }
 func (s *Shape) SetLocY(v float64)   { s.SetCellValue(CellLocPinY, fmtFloat(v)) }
-func (s *Shape) SetWidth(v float64)  { s.SetCellValue(CellWidth, fmtFloat(v)) }
-func (s *Shape) SetHeight(v float64) { s.SetCellValue(CellHeight, fmtFloat(v)) }
+// SetWidth changes the shape's Width cell AND scales every absolute X
+// coordinate in its local geometry by the same factor. Without the scaling,
+// shapes whose geometry rows store absolute values (e.g. "MoveTo X=1.488")
+// keep rendering at their old width even after the Width cell changes —
+// because Visio normally re-evaluates the master's formulas to recompute
+// those values, and we don't run a ShapeSheet evaluator at render time.
+// Relative-coord rows (RelMoveTo etc.) are left alone; their stored fractions
+// already track the new width via the resolver's localW multiplication.
+func (s *Shape) SetWidth(v float64) {
+	old := s.Width()
+	s.SetCellValue(CellWidth, fmtFloat(v))
+	if old > 0 && v > 0 && v != old {
+		scaleGeometryAxis(s.Geometry, "X", v/old)
+	}
+}
+
+// SetHeight is the Y-axis sibling of SetWidth.
+func (s *Shape) SetHeight(v float64) {
+	old := s.Height()
+	s.SetCellValue(CellHeight, fmtFloat(v))
+	if old != 0 && v != 0 && v != old {
+		// Y axes use signed values (Visio negative-height shapes), so use
+		// magnitudes for the ratio to avoid flipping the geometry.
+		ratio := absVal(v) / absVal(old)
+		if ratio != 1.0 {
+			scaleGeometryAxis(s.Geometry, "Y", ratio)
+		}
+	}
+}
+
+func absVal(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// scaleGeometryAxis multiplies the named cell ("X" or "Y") of every
+// absolute-coord row in g by scale. Rows whose XML lives in the master's
+// geometry section are skipped — we don't want to mutate the master.
+func scaleGeometryAxis(g *Geometry, cellName string, scale float64) {
+	if g == nil {
+		return
+	}
+	for _, row := range g.Rows {
+		if row.xml == nil || row.xml.Parent() != g.xml {
+			continue
+		}
+		switch strings.ToLower(row.RowType()) {
+		case "relmoveto", "rellineto", "relcubbezto", "relquadbezto", "relellipticalarcto":
+			// already fractional — the renderer multiplies by localW/H.
+			continue
+		}
+		cell := row.Cells[cellName]
+		if cell == nil {
+			continue
+		}
+		newV := toFloat(cell.Value()) * scale
+		cell.SetValue(fmtFloat(newV))
+	}
+}
 func (s *Shape) SetAngle(v float64)  { s.SetCellValue(CellAngle, fmtFloat(v)) }
 
 func (s *Shape) SetBeginX(v float64) { s.SetCellValue(CellBeginX, fmtFloat(v)) }
