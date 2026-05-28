@@ -237,6 +237,18 @@ func (e *SVGEmitter) findMaxStrokeWidthRecursive(node *RenderNode, max *float64)
 	}
 }
 
+// pathHasClosedShape returns true if the path contains a closed sub-path
+// (ends with Z/z). Used to distinguish bar markers (24-26, 28) from combo
+// markers with circle (29, 30) which need different end-marker positioning.
+func pathHasClosedShape(path string) bool {
+	for _, c := range path {
+		if c == 'z' || c == 'Z' {
+			return true
+		}
+	}
+	return false
+}
+
 // isVerticalBarOnly returns true if every L command in the path moves only in Y
 // from its preceding M (i.e. the path is one or more vertical line segments).
 // Used to pick the right stroke-width compensation for bar arrows (24-26).
@@ -374,9 +386,24 @@ func (e *SVGEmitter) emitMarker(m *MarkerDef) string {
 			refX = 0
 		}
 	} else if isBackAnchored {
-		// B-type end: mirror path so body ends up at viewBox 10 (= refX) and
-		// apex/elements at viewBox 0 (= back into line area after auto orient).
-		pathStr = mirrorPathX(m.Path)
+		// B-type end has two sub-cases depending on whether the arrow has
+		// a setback (line shortening):
+		//   - Setback=0 (bars 23-28, single chevrons): the marker sits ON
+		//     the line, BEHIND the visible endpoint (overlapping the last
+		//     few sw of line). Keep path as-is with refX=10.
+		//   - Setback>0 (combos with circle: 29, 30): line is shortened
+		//     and the marker components (circle, bar, connecting line) sit
+		//     FORWARD of the shortened endpoint so they sit at/past the
+		//     original endpoint position. Mirror path and use refX=0.
+		// Distinguish via the arrow's natural setback amount.
+		// Note: m has no direct Setback field — we infer via the path layout.
+		// Arrows with a closed shape (circle) at the +X end of their natural
+		// lend coords need mirroring; bar-only arrows don't.
+		if pathHasClosedShape(m.Path) {
+			pathStr = mirrorPathX(m.Path)
+			refX = 0
+		}
+		// else: keep path and refX=10 (bars BEHIND line endpoint)
 	}
 
 	// preserveAspectRatio="none" lets the 10x10 path stretch to match
