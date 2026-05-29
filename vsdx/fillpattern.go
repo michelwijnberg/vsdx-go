@@ -5,9 +5,101 @@ import (
 	"strings"
 )
 
+// patternBitmap maps each fillPattern type to its canonical 8×8 bitmap as
+// decoded from Visio's SVG export PNGs. Each string is 8 rows of 8 chars,
+// '.' = background, 'X' = foreground. Patterns absent from this map fall
+// back to the legacy line/circle emitters below.
+var patternBitmap = map[int][8]string{
+	2: { // Thin diagonal upward
+		".......X",
+		"......X.",
+		".....X..",
+		"....X...",
+		"...X....",
+		"..X.....",
+		".X......",
+		"X.......",
+	},
+	3: { // L-shape grid (top edge + left edge)
+		"XXXXXXXX",
+		"X.......",
+		"X.......",
+		"X.......",
+		"X.......",
+		"X.......",
+		"X.......",
+		"X.......",
+	},
+	4: { // X pattern (crosshatch)
+		"X......X",
+		".X....X.",
+		"..X..X..",
+		"...XX...",
+		"...XX...",
+		"..X..X..",
+		".X....X.",
+		"X......X",
+	},
+	5: { // Thin diagonal downward
+		"X.......",
+		".X......",
+		"..X.....",
+		"...X....",
+		"....X...",
+		".....X..",
+		"......X.",
+		".......X",
+	},
+	6: { // Horizontal line at top
+		"XXXXXXXX",
+		"........",
+		"........",
+		"........",
+		"........",
+		"........",
+		"........",
+		"........",
+	},
+	7: { // Vertical line at left
+		"X.......",
+		"X.......",
+		"X.......",
+		"X.......",
+		"X.......",
+		"X.......",
+		"X.......",
+		"X.......",
+	},
+	8: { // Dense pattern: inverse-X (Visio's "shading")
+		".XXX.XXX",
+		"XX.XXX.X",
+		".XXX.XXX",
+		"XX.XXX.X",
+		".XXX.XXX",
+		"XX.XXX.X",
+		".XXX.XXX",
+		"XX.XXX.X",
+	},
+	9: { // Checkerboard
+		".X.X.X.X",
+		"X.X.X.X.",
+		".X.X.X.X",
+		"X.X.X.X.",
+		".X.X.X.X",
+		"X.X.X.X.",
+		".X.X.X.X",
+		"X.X.X.X.",
+	},
+}
+
 // fillPatternToSVG generates an SVG <pattern> element for a Visio fill pattern.
 // Patterns 2-24 are hatching patterns (lines, grids, dots).
 // Patterns 25-40 are gradient-like patterns (handled separately via FillGradient).
+//
+// Pixel-accurate mode: when patternType has an entry in patternBitmap, we
+// emit the pattern as an 8×8 grid of <rect> elements inside a viewBox so
+// the rasteriser sees the same pixel structure Visio's embedded 8×8 PNG
+// produces. Other patterns fall back to the legacy line/circle emitters.
 func fillPatternToSVG(patternType int, id, foreColor, backColor string, scale float64) string {
 	if patternType < 2 || patternType > 24 {
 		return ""
@@ -23,12 +115,34 @@ func fillPatternToSVG(patternType int, id, foreColor, backColor string, scale fl
 		backColor = "#FFFFFF"
 	}
 
-	// Base pattern size (will be scaled). Visio's canonical hatch tile is
-	// 6 user-space units (matches the comprehensive corpus where every
-	// <pattern width="6" height="6"> entry comes from the resave). Earlier
-	// vsdx-go used 8 which made every hatch pattern visibly sparser than
-	// Visio's.
+	// Tile size in user-space units. Visio uses 6 for hatch patterns; we
+	// expose the bitmap as `viewBox="0 0 8 8"` so each "pixel" is 1 unit
+	// in the bitmap's coordinate frame, then SVG scales the viewBox down
+	// to the 6-unit tile.
 	size := 6.0 * scale
+
+	// Pixel-accurate path: emit one rect per filled cell of the 8×8 bitmap
+	// inside a viewBox so the renderer sees exactly Visio's pixel
+	// structure (the same effect Visio gets by embedding an 8×8 PNG with
+	// image-rendering="optimizeSpeed").
+	if bm, ok := patternBitmap[patternType]; ok {
+		var svg strings.Builder
+		svg.WriteString(fmt.Sprintf(
+			`<pattern id="%s" patternUnits="userSpaceOnUse" width="%g" height="%g" viewBox="0 0 8 8">`,
+			id, size, size))
+		svg.WriteString(fmt.Sprintf(`<rect width="8" height="8" fill="%s" shape-rendering="crispEdges"/>`, backColor))
+		for y, row := range bm {
+			for x, ch := range row {
+				if ch == 'X' {
+					svg.WriteString(fmt.Sprintf(
+						`<rect x="%d" y="%d" width="1" height="1" fill="%s" shape-rendering="crispEdges"/>`,
+						x, y, foreColor))
+				}
+			}
+		}
+		svg.WriteString("</pattern>")
+		return svg.String()
+	}
 
 	var svg strings.Builder
 	svg.WriteString(fmt.Sprintf(`<pattern id="%s" patternUnits="userSpaceOnUse" width="%g" height="%g">`, id, size, size))
