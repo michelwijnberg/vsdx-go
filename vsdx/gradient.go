@@ -18,8 +18,18 @@ type GradientStop struct {
 type Gradient struct {
 	Enabled bool
 	Type    string  // "linear" or "radial"
-	Angle   float64 // In radians
+	Angle   float64 // In radians (linear only)
 	Stops   []GradientStop
+
+	// RadialDir mirrors Visio's FillGradientDir for radial gradients —
+	// it picks WHERE the radial centre sits inside the shape's bbox.
+	//   7 = top-left corner    (center at 0,0; radius covers diagonal)
+	//   8 = top-right corner
+	//   9 = bottom-left corner
+	//  10 = bottom-right corner
+	//  11 = centre (true centered radial)
+	// Defaults to 11 (centre) when Type == "radial" but RadialDir is unset.
+	RadialDir int
 }
 
 // FillGradient returns the fill gradient settings for the shape.
@@ -48,10 +58,13 @@ func (s *Shape) FillGradient() *Gradient {
 	// Get gradient angle (in radians).
 	g.Angle = toFloat(s.CellValue("FillGradientAngle"))
 
-	// Get gradient direction type.
+	// Get gradient direction type. FillGradientDir values 7-11 are radial
+	// variants with different centre positions; treat all as radial and
+	// remember the direction so the SVG emitter can place the centre.
 	gradDir := s.CellValue("FillGradientDir")
-	if gradDir == "7" {
+	if dirN := int(toFloat(gradDir)); dirN >= 7 && dirN <= 11 {
 		g.Type = "radial"
+		g.RadialDir = dirN
 	}
 
 	// Parse gradient stops from Section N="FillGradient".
@@ -134,7 +147,24 @@ func gradientToSVGDef(g *Gradient, id string, precision int) string {
 	var svg strings.Builder
 
 	if g.Type == "radial" {
-		svg.WriteString(fmt.Sprintf(`<radialGradient id="%s" cx="50%%" cy="50%%" r="50%%" fx="50%%" fy="50%%">`, id))
+		// Position the radial centre based on RadialDir. Visio's "radial
+		// from corner" (FillGradientDir = 7-10) puts the gradient origin
+		// at the bbox corner and uses radius 1.4 (140% of the bbox) so the
+		// gradient covers the diagonal. RadialDir = 11 (or unset) is the
+		// true centred radial.
+		cx, cy, r := "50%", "50%", "50%"
+		switch g.RadialDir {
+		case 7: // top-left corner
+			cx, cy, r = "0%", "0%", "140%"
+		case 8: // top-right corner
+			cx, cy, r = "100%", "0%", "140%"
+		case 9: // bottom-left corner
+			cx, cy, r = "0%", "100%", "140%"
+		case 10: // bottom-right corner
+			cx, cy, r = "100%", "100%", "140%"
+		}
+		svg.WriteString(fmt.Sprintf(`<radialGradient id="%s" cx="%s" cy="%s" r="%s" fx="%s" fy="%s">`,
+			id, cx, cy, r, cx, cy))
 	} else {
 		// Linear gradient: place start/end on a unit circle around (50%,50%).
 		// Visio's FillGradientAngle is measured clockwise from the X-axis in
