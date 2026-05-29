@@ -549,12 +549,13 @@ func (b *RenderTreeBuilder) resolveText(shape *Shape, style *EffectiveStyle, tra
 		Baseline:   "alphabetic",
 	}
 
-	// For 1D connector shapes (have explicit Begin/End endpoints) Visio draws
-	// a white rectangle behind the text so the connector line doesn't bisect
-	// it. Detect a connector by the presence of BeginX/EndX cells.
-	if shape.CellValue("BeginX") != "" || shape.CellValue("EndX") != "" {
-		text.BackgroundFill = "#FFFFFF"
-	}
+	// Note: an earlier version painted a white rectangle behind connector
+	// labels on the assumption that "Visio draws a white rectangle behind
+	// the text so the connector line doesn't bisect it". Inspection of
+	// real Visio SVG exports (vsdx-svg/logical-architecture.svg, the
+	// comprehensive Connectors page) shows Visio emits no such rect — it
+	// just places the text element. We follow Visio's actual behaviour
+	// and skip the background fill on connector text.
 
 	if style.Bold {
 		text.FontWeight = "bold"
