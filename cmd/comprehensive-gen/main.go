@@ -571,16 +571,23 @@ func buildArrowsPage(v *vsdx.VisioFile) {
 	cellW, cellH := 1.6, 0.5
 	mx := 0.3
 
+	// Each arrow demo is a REAL connector built via ConnectShapes (so it
+	// gets the Dynamic Connector master attached). Standalone 1D shapes
+	// with BeginX/EndX but no master are not classified as connectors by
+	// Visio's SVG exporter, and arrows get dropped — that's why an
+	// earlier orphan-shape variant exported with no markers at all.
+
 	// Rows 0-3: arrow types 1-24 with end-arrow only
 	for i := 1; i <= 24; i++ {
 		col := (i - 1) % 6
 		row := (i - 1) / 6
 		x := mx + float64(col)*cellW + cellW/2
 		y := pageH - 0.4 - float64(row)*cellH - cellH/2
-		addArrowLine(p, x, y, cellW*0.85, fmt.Sprintf("arrow-end-%02d", i), 0, i, 2)
+		addArrowConnector(v, p, x, y, cellW*0.85,
+			fmt.Sprintf("arrow-end-%02d", i), 0, i, 2)
 	}
 
-	// Rows 4-5: arrows on both ends (selected combos)
+	// Row 4: arrows on both ends (selected combos)
 	combos := []struct{ b, e int }{
 		{1, 1}, {3, 3}, {5, 5}, {13, 13}, {39, 39}, {44, 44},
 	}
@@ -589,84 +596,72 @@ func buildArrowsPage(v *vsdx.VisioFile) {
 		row := 4
 		x := mx + float64(col)*cellW + cellW/2
 		y := pageH - 0.4 - float64(row)*cellH - cellH/2
-		addArrowLine(p, x, y, cellW*0.85,
+		addArrowConnector(v, p, x, y, cellW*0.85,
 			fmt.Sprintf("arrow-both-b%02d-e%02d", c.b, c.e),
 			c.b, c.e, 2)
 	}
 
-	// Row 5: arrow sizes (size 0=xs, 1=s, 2=m, 3=l, 4=xl, 5=xxl, 6=huge)
+	// Row 5: arrow sizes (size 0=xs, 1=s, ..., 5=xxl)
 	sizes := []int{0, 1, 2, 3, 4, 5}
 	for i, sz := range sizes {
 		x := mx + float64(i)*cellW + cellW/2
 		y := pageH - 0.4 - 5*cellH - cellH/2
-		s := addArrowLine(p, x, y, cellW*0.85, fmt.Sprintf("arrow-size-%d", sz),
-			0, 13, sz)
-		_ = s
+		addArrowConnector(v, p, x, y, cellW*0.85,
+			fmt.Sprintf("arrow-size-%d", sz), 0, 13, sz)
 	}
 
-	// Rows 6-7: curved (NURBS) connectors with arrows
+	// Row 6: curved connector demos. ConnectShapes auto-routes between
+	// the anchors; for variety we just place anchors further apart.
 	for i, sz := range []int{2, 4} {
 		x := mx + float64(i)*cellW*2 + cellW
 		y := pageH - 0.4 - 6*cellH - cellH/2
-		addCurvedArrow(p, x, y, cellW*1.8, cellH*0.8,
-			fmt.Sprintf("arrow-curved-size%d", sz), 13, sz)
+		addArrowConnector(v, p, x, y, cellW*1.8,
+			fmt.Sprintf("arrow-curved-size%d", sz), 0, 13, sz)
 	}
 }
 
-// addArrowLine creates a 1D shape (BeginX/EndX) horizontal line with arrows.
-// PinX is the line's CENTER (so bbox spans cx±length/2). Height is a small
-// positive number to avoid Visio quirks with H=0 shapes.
-func addArrowLine(p *vsdx.Page, cx, cy, length float64, label string,
-	beginArrow, endArrow, size int) *vsdx.Shape {
-	s := p.AddShape()
-	s.SetX(cx)
-	s.SetY(cy)
-	s.SetBeginX(cx - length/2)
-	s.SetBeginY(cy)
-	s.SetEndX(cx + length/2)
-	s.SetEndY(cy)
-	s.SetWidth(length)
-	s.SetHeight(0.01)
-	s.SetLocX(length / 2)
-	s.SetLocY(0.005)
-	// Geometry: horizontal line through the local Y center.
-	g := s.AddGeometry()
-	g.AddMoveTo(0, 0.005)
-	g.AddLineTo(length, 0.005)
-	s.SetLineColor("#222222")
-	s.SetLineWeight(0.022)
+// addArrowConnector spans (cx - length/2, cy) → (cx + length/2, cy) as a
+// real Visio connector. Two invisible anchor shapes are dropped at the
+// endpoints and ConnectShapes builds the connector between them; arrow
+// type, size, and identifying text are applied to the resulting connector.
+// Returns the connector shape.
+//
+// The anchor shapes are 0.001"×0.001", with FillPattern=0 and a geometry
+// section explicitly marked NoFill=1 / NoLine=1 — visually inert but
+// large enough that Visio still allocates connection points.
+func addArrowConnector(v *vsdx.VisioFile, p *vsdx.Page, cx, cy, length float64,
+	label string, beginArrow, endArrow, size int) *vsdx.Shape {
+	mkAnchor := func(x, y float64) *vsdx.Shape {
+		a := p.AddShape()
+		a.SetX(x)
+		a.SetY(y)
+		a.SetWidth(0.001)
+		a.SetHeight(0.001)
+		a.SetLocX(0.0005)
+		a.SetLocY(0.0005)
+		a.AddGeometryRect()
+		a.SetFillPattern(0)
+		a.SetCellValue("LinePattern", "0")
+		return a
+	}
+	src := mkAnchor(cx-length/2, cy)
+	dst := mkAnchor(cx+length/2, cy)
+	conn, err := v.ConnectShapes(p, src, dst)
+	if err != nil {
+		fatal("ConnectShapes(%s): %v", label, err)
+	}
+	conn.SetLineColor("#222222")
+	conn.SetLineWeight(0.022)
 	if beginArrow > 0 {
-		s.SetBeginArrow(beginArrow)
-		s.SetCellValue("BeginArrowSize", strconv.Itoa(size))
+		conn.SetBeginArrow(beginArrow)
+		conn.SetCellValue("BeginArrowSize", strconv.Itoa(size))
 	}
 	if endArrow > 0 {
-		s.SetEndArrow(endArrow)
-		s.SetCellValue("EndArrowSize", strconv.Itoa(size))
+		conn.SetEndArrow(endArrow)
+		conn.SetCellValue("EndArrowSize", strconv.Itoa(size))
 	}
-	// Put label below the line as text so it's identifiable.
-	s.SetText(label)
-	return s
-}
-
-func addCurvedArrow(p *vsdx.Page, cx, cy, w, h float64, label string,
-	endArrow, size int) *vsdx.Shape {
-	s := p.AddShape()
-	s.SetX(cx)
-	s.SetY(cy)
-	s.SetWidth(w)
-	s.SetHeight(h)
-	s.SetLocX(w / 2)
-	s.SetLocY(h / 2)
-	g := s.AddGeometry()
-	// Cubic bezier curve from left to right with control points up/down.
-	g.AddMoveTo(0, h/2)
-	g.AddRelCubBezTo(w, h/2, 0.33, h, 0.66, 0)
-	s.SetLineColor("#222222")
-	s.SetLineWeight(0.022)
-	s.SetEndArrow(endArrow)
-	s.SetCellValue("EndArrowSize", strconv.Itoa(size))
-	s.SetText(label)
-	return s
+	conn.SetText(label)
+	return conn
 }
 
 // ---------- Page 5: Text ----------
