@@ -273,15 +273,23 @@ func (e *SVGEmitter) findMaxStrokeWidthRecursive(node *RenderNode, max *float64)
 }
 
 // pathHasClosedShape returns true if the path contains a closed sub-path
-// (ends with Z/z). Used to distinguish bar markers (24-26, 28) from combo
-// markers with circle (29, 30) which need different end-marker positioning.
+// that uses an arc command (A) — i.e. a circle/ellipse. Used to identify
+// combo markers like lend29/30 (chevron + circle) which need to be drawn
+// FORWARD of the line endpoint. Filled triangle markers (lend39 etc.)
+// also have Z but draw BEHIND the endpoint, so we don't want to mirror
+// them — hence the arc requirement.
 func pathHasClosedShape(path string) bool {
+	hasArc := false
+	hasClose := false
 	for _, c := range path {
-		if c == 'z' || c == 'Z' {
-			return true
+		switch c {
+		case 'A', 'a':
+			hasArc = true
+		case 'z', 'Z':
+			hasClose = true
 		}
 	}
-	return false
+	return hasArc && hasClose
 }
 
 // isVerticalBarOnly returns true if every L command in the path moves only in Y

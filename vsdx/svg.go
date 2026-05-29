@@ -135,12 +135,19 @@ var visioArrowTypes = map[int]ArrowDef{
 	36: {Path: "M0 5 A5 5 0 1 1 10 5 A5 5 0 1 1 0 5 M10 5 L14 5 M12 2 L12 8", W: 2.8, H: 2.0, RefX: 0, RefY: 5, Filled: true},
 	37: {Path: "M0 5 A5 5 0 1 1 10 5 A5 5 0 1 1 0 5 M10 5 L16 5 M12 2 L12 8 M14 2 L14 8", W: 3.2, H: 2.0, RefX: 0, RefY: 5, Filled: true},
 	38: {Path: "M0 5 L3 2 L6 5 L3 8 z M4 5 L7 2 L10 5 L7 8 z", W: 2.0, H: 2.0, RefX: 0, RefY: 5, Filled: true},
-	39: {Path: "M0 0 L6 5 L0 10 z M4 0 L10 5 L4 10 z", W: 2.0, H: 2.0, RefX: 0, RefY: 5, Filled: true},
-	40: {Path: "M0 0 L6 5 L0 10 M4 0 L10 5 L4 10", W: 2.0, H: 2.0, RefX: 0, RefY: 5, Filled: false},
+	// Type 39: double chevron (filled triangles) — Visio's lend39 has both
+	// tips pointing INTO the line (apex backward from line end), bases at
+	// the line endpoint. The mirror+refX=10 reproduces that layout.
+	39: {Path: "M0 5 L5 0 L5 10 L0 5 z M5 5 L10 0 L10 10 L5 5 z", W: 2.0, H: 2.0, RefX: 10, RefY: 5, Filled: true},
+	40: {Path: "M0 5 L5 0 L5 10 M5 5 L10 0 L10 10", W: 2.0, H: 2.0, RefX: 10, RefY: 5, Filled: false},
 	41: {Path: "M0 2 L10 5 L0 8", W: 2.0, H: 2.0, RefX: 0, RefY: 5, Filled: false},
 	42: {Path: "M0 5 A5 5 0 1 1 10 5 A5 5 0 1 1 0 5 z", W: 2.4, H: 2.0, RefX: 0, RefY: 5, Filled: true},
 	43: {Path: "M0 0 L5 5 L0 10 M5 0 L10 5 L5 10", W: 2.4, H: 2.0, RefX: 0, RefY: 5, Filled: false},
-	44: {Path: "M0 0 L8 5 L0 10 M8 2 L8 8", W: 2.0, H: 2.0, RefX: 0, RefY: 5, Filled: false},
+	// Type 44: chevron + perpendicular bar — Visio's lend44 has the chevron
+	// apex BACKWARD into the line and the bar between the chevron opening
+	// and the line endpoint. Mirror so apex sits at x=0 (= -refX, deep
+	// into line), bases at x=5 (-5), bar at x=7.5 (-2.5 from refX=10).
+	44: {Path: "M5 0 L0 5 L5 10 M7.5 1.25 L7.5 8.75", W: 2.0, H: 2.0, RefX: 10, RefY: 5, Filled: false},
 	45: {Path: "M0 0 L5 5 L0 10 M5 0 L10 5 L5 10 M10 2 L10 8", W: 2.0, H: 2.0, RefX: 0, RefY: 5, Filled: false},
 }
 
