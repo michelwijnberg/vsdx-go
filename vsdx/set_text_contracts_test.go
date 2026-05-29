@@ -7,23 +7,14 @@ import (
 
 // SetText is the only Laag-C mutator that does NOT have a localize-style
 // inheritance fix, because Text inheritance works via the master-fallback in
-// Text() rather than via cell aliasing. The audit's concern (EC-007) is
-// destructive behaviour: a Visio Text element can contain <cp>, <pp>, <fld>
-// markers that interleave with the literal text to apply character format,
-// paragraph format, or insert fields. SetText calls clearAllText which
-// recursively SetText("") + SetTail("") on every child — but leaves the
-// child ELEMENTS in place. So after SetText:
+// Text() rather than via cell aliasing.
 //
-//   - The literal text is the new value (correct)
-//   - Existing <cp>/<pp>/<fld> children are still present in the XML, but
-//     their text content is now empty
-//   - The original interleaving positions are lost
-//
-// For pure-text shapes this is fine. For format-rich shapes the user's
-// formatting structure survives but is detached from the text it used to
-// annotate. The tests below pin the current behaviour so any future change
-// to SetText's contract (e.g. "remove all children" or "preserve formatting
-// runs") is intentional and reviewed.
+// EC-007 contract (closed 2026-05-29): SetText fully replaces the Text
+// element body. Any <cp>/<pp>/<fld> format-marker children are REMOVED
+// because their indices reference text positions that no longer exist
+// after the rewrite. The Character/Paragraph/Field SECTIONS on the shape
+// are not touched — only the in-text markers. Callers who want format-rich
+// text must re-insert markers themselves.
 
 func TestSetTextContract_SetAndRead(t *testing.T) {
 	data := loadFixtureBytes(t, setWidthFixture)
@@ -88,19 +79,10 @@ func TestSetTextContract_MasterIsolation(t *testing.T) {
 	})
 }
 
-// EC-007 PIN-DOWN: this test characterises the CURRENT destructive behaviour
-// of SetText on a shape that has format-marker children (<cp> for character
-// formatting). The current implementation:
-//
-//   - Keeps the <cp> elements in the XML
-//   - Empties their text content (clearAllText)
-//   - Loses the interleaving so the new text has no formatting boundaries
-//
-// We don't say "this is wrong" here — we PIN the current behaviour so a
-// future refactor must make an explicit decision. If SetText starts removing
-// children entirely (option A) or preserving full runs (option B), this
-// test will fail and force a doc update.
-func TestSetTextContract_EC007_PreservesFormatMarkerElements(t *testing.T) {
+// EC-007 (closed): SetText strips all in-text format markers (<cp>, <pp>,
+// <fld>). The shape's Character/Paragraph/Field SECTIONS remain untouched,
+// so a caller that wants the old formatting can re-insert markers.
+func TestSetTextContract_EC007_StripsFormatMarkerElements(t *testing.T) {
 	v, err := Open(testFile("test12_colors.vsdx"))
 	if err != nil {
 		t.Skipf("test12_colors.vsdx not available: %v", err)
@@ -134,27 +116,13 @@ func TestSetTextContract_EC007_PreservesFormatMarkerElements(t *testing.T) {
 
 	target.SetText("OVERWRITTEN")
 
-	// Re-find Text element on the same shape (SetText might have replaced it).
 	textElAfter := target.XML().FindElement("Text")
 	if textElAfter == nil {
 		t.Fatal("Text element disappeared after SetText")
 	}
-	cpCountAfter := 0
-	for _, c := range textElAfter.ChildElements() {
-		if c.Tag == "cp" {
-			cpCountAfter++
-		}
+	if n := len(textElAfter.ChildElements()); n != 0 {
+		t.Errorf("Text element has %d child elements after SetText, want 0 (all format markers stripped)", n)
 	}
-
-	// CURRENT behaviour: cp count is preserved (clearAllText doesn't delete).
-	// If you change SetText to delete format markers, update this test AND
-	// section §10 + EC-007 in EDIT_CONTRACTS.md.
-	if cpCountAfter != cpCountBefore {
-		t.Errorf("EC-007 contract change: cp count went from %d to %d after SetText. Update EDIT_CONTRACTS.md if intentional.",
-			cpCountBefore, cpCountAfter)
-	}
-
-	// The new text must be readable as the top-level text content.
 	if got := target.Text(); !strings.Contains(got, "OVERWRITTEN") {
 		t.Errorf("Text() = %q, expected to contain %q", got, "OVERWRITTEN")
 	}

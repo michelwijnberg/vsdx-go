@@ -50,3 +50,17 @@ func (c *Connect) Shape() *Shape {
 func (c *Connect) ConnectorShape() *Shape {
 	return c.page.FindShapeByID(c.ConnectorShapeID())
 }
+
+// Remove strips this <Connect> element from the page's <Connects> section.
+// Neither the connector shape nor the terminal shape is touched — the
+// connector keeps its current geometry, only the binding disappears. After
+// Remove, this *Connect is detached and further method calls are no-ops.
+func (c *Connect) Remove() {
+	if c.xml == nil {
+		return
+	}
+	if parent := c.xml.Parent(); parent != nil {
+		parent.RemoveChild(c.xml)
+	}
+	c.xml = nil
+}

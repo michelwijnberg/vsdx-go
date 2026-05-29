@@ -116,39 +116,25 @@ func TestGroupShapesContract_BboxCenteredPins(t *testing.T) {
 }
 
 // Bbox math: for shapes whose pin is OFF-CENTER (LocX != Width/2), the
-// current implementation uses Width/2 as the half-width on either side of
-// the pin. That's only exact when LocX == Width/2.
-//
-// We document the current behaviour explicitly: bbox is computed as
-// (pin ± Width/2) rather than (pin - LocX, pin - LocX + Width). For a
-// shape with pin at the LEFT edge (LocX=0), the visible rect is
-// (pin, pin+Width), but the current code computes (pin - Width/2,
-// pin + Width/2) — off by Width/2.
-//
-// This test PINS that drift. If foreign.go starts using s.LocX() (after
-// the stale-V concern is fixed elsewhere), the assertion below should be
-// flipped to expect the tight bbox. Update foreign.go's comment together.
-func TestGroupShapesContract_BboxOffCenterPin_PinsCurrentDrift(t *testing.T) {
+// bbox must use (pin - LocX, pin - LocX + Width) — not (pin ± Width/2).
+// For a shape with pin at the LEFT edge (LocX=0), the visible rect is
+// (pin, pin+Width). EC-013 closed the prior Width/2 approximation; this
+// test now pins the tight bbox.
+func TestGroupShapesContract_BboxOffCenterPin(t *testing.T) {
 	v := newBlankFile(t)
 	defer v.Close()
 	p := v.GetPage(0)
-	// A shape with pin at the LEFT edge — LocX=0, so bbox SHOULD be
-	// (pin, pin+W) = (5, 6).
+	// Pin at the LEFT edge: LocX=0, so visible rect = (5, 6).
 	addRect(p, 5.0, 5.0, 1.0, 1.0, 0.0, 0.0)
 
 	g := p.GroupShapes(p.ChildShapes(), 0)
-	// Current drift: code computes (5 - 0.5, 5 + 0.5) = (4.5, 5.5).
-	// Center = 5, width = 1. That's the bbox the code currently produces.
-	if math.Abs(g.X()-5.0) > 1e-9 {
-		t.Errorf("group X = %v. Current Width/2 approximation should put center at the pin (5.0). If you fixed the stale-V issue and switched to LocX(), update this test.",
-			g.X())
+	// Expected: bbox = (5, 6), width=1, center=5.5.
+	if math.Abs(g.X()-5.5) > 1e-9 {
+		t.Errorf("group X = %v, want 5.5 (center of bbox 5..6)", g.X())
 	}
 	if math.Abs(g.Width()-1.0) > 1e-9 {
 		t.Errorf("group Width = %v, want 1.0", g.Width())
 	}
-	// The actual visible rect extends from 5 to 6, but the group thinks it
-	// extends from 4.5 to 5.5. Document this in the test failure if a
-	// future fix changes it.
 }
 
 // Round-trip: a grouped page survives save+reopen with all children intact.

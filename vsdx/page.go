@@ -267,6 +267,42 @@ func (p *Page) Connects() []*Connect {
 	return connects
 }
 
+// DisconnectShapes removes every <Connect> on the page whose FromSheet
+// matches connector.ID and ToSheet matches terminal.ID. Both shapes
+// remain on the page — only the binding(s) between them are stripped.
+// Use this to detach a connector endpoint without deleting the connector
+// shape (see Shape.Remove for full delete-with-cleanup).
+//
+// Returns the number of <Connect> elements removed. Pass nil for either
+// shape to match any value on that side (e.g. DisconnectShapes(c, nil)
+// drops every binding owned by connector c).
+func (p *Page) DisconnectShapes(connector, terminal *Shape) int {
+	if p.xml == nil || p.xml.Root() == nil {
+		return 0
+	}
+	var fromID, toID string
+	if connector != nil {
+		fromID = connector.ID
+	}
+	if terminal != nil {
+		toID = terminal.ID
+	}
+	removed := 0
+	for _, connectElem := range append([]*etree.Element(nil), p.xml.Root().FindElements(".//Connect")...) {
+		if fromID != "" && connectElem.SelectAttrValue("FromSheet", "") != fromID {
+			continue
+		}
+		if toID != "" && connectElem.SelectAttrValue("ToSheet", "") != toID {
+			continue
+		}
+		if parent := connectElem.Parent(); parent != nil {
+			parent.RemoveChild(connectElem)
+			removed++
+		}
+	}
+	return removed
+}
+
 // --- Search methods ---
 
 // FindShapeByID searches for a shape by ID on this page.

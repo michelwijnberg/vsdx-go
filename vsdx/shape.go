@@ -1419,25 +1419,24 @@ func (s *Shape) Text() string {
 	return ""
 }
 
-// SetText sets the text content of the shape. Clears existing sub-element text.
+// SetText sets the text content of the shape. Replaces the entire Text
+// element body: any existing <cp>/<pp>/<fld> format-marker children are
+// removed because their indices reference text positions that no longer
+// exist. The Character/Paragraph/Field SECTIONS on the shape are NOT
+// touched — only the in-text markers. Callers who want format-rich text
+// must re-insert markers themselves.
 // Creates a Text element if one doesn't already exist.
 func (s *Shape) SetText(text string) {
 	textElem := s.xml.FindElement("Text")
 	if textElem == nil {
 		textElem = s.xml.CreateElement("Text")
 	} else {
-		clearAllText(textElem)
+		for _, child := range textElem.ChildElements() {
+			textElem.RemoveChild(child)
+		}
+		textElem.SetTail("")
 	}
 	textElem.SetText(text)
-}
-
-// clearAllText recursively clears text content from an element and its children.
-func clearAllText(e *etree.Element) {
-	e.SetText("")
-	e.SetTail("")
-	for _, child := range e.ChildElements() {
-		clearAllText(child)
-	}
 }
 
 // AddGeometry creates a new empty Geometry section on the shape and returns it.

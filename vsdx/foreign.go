@@ -169,27 +169,31 @@ func (p *Page) GroupShapes(shapes []*Shape, padding float64) *Shape {
 	}
 
 	// Compute axis-aligned bounding box of all shapes.
-	// Use Width()/2 rather than LocX() because LocPinX's cached V attribute
-	// can be stale after resize (the formula Width*0.5 is correct but V isn't
-	// recalculated until Visio opens the file).
+	// bbox = (PinX - LocX, PinY - LocY, +Width, +Height). Width/2 was an
+	// approximation that drifts for off-center pins; SetWidth/SetHeight now
+	// scale LocPinX/Y so the cached V stays in sync (see commits bdbf70d,
+	// 5b949ec). Shapes opened from Visio have V populated at save-time.
 	minX := math.Inf(1)
 	minY := math.Inf(1)
 	maxX := math.Inf(-1)
 	maxY := math.Inf(-1)
 	for _, s := range shapes {
 		x, y := s.X(), s.Y()
-		hw, hh := s.Width()/2, s.Height()/2
-		if x-hw < minX {
-			minX = x - hw
+		w, h := s.Width(), s.Height()
+		lx, ly := s.LocX(), s.LocY()
+		left, bottom := x-lx, y-ly
+		right, top := left+w, bottom+h
+		if left < minX {
+			minX = left
 		}
-		if y-hh < minY {
-			minY = y - hh
+		if bottom < minY {
+			minY = bottom
 		}
-		if x+hw > maxX {
-			maxX = x + hw
+		if right > maxX {
+			maxX = right
 		}
-		if y+hh > maxY {
-			maxY = y + hh
+		if top > maxY {
+			maxY = top
 		}
 	}
 
