@@ -126,16 +126,23 @@ func gradientToSVGDef(g *Gradient, id string, precision int) string {
 	if g.Type == "radial" {
 		svg.WriteString(fmt.Sprintf(`<radialGradient id="%s" cx="50%%" cy="50%%" r="50%%" fx="50%%" fy="50%%">`, id))
 	} else {
-		// Linear gradient: place start/end on a unit circle around (50%,50%),
-		// then take a SVG-Y-down direction vector matching Visio's angle.
-		// Visio: angle=0 → horizontal L→R, angle=π/2 → vertical bottom→top
-		// (Y-up). In SVG (Y-down) the bottom→top direction has negative Y.
+		// Linear gradient: place start/end on a unit circle around (50%,50%).
+		// Visio's FillGradientAngle is measured clockwise from the X-axis in
+		// screen-space (NOT counter-clockwise from Visio's Y-up frame).
+		//   angle=0    → horizontal L→R
+		//   angle=π/2  → top→bottom (Visio's "vertical" gradient flows down)
+		//   angle=π/4  → top-left → bottom-right diagonal
+		// That matches MS Office convention (PowerPoint, Visio UI). Got
+		// confirmed against the comprehensive corpus where Visio's
+		// `gradientTransform="rotate(45 0.5 0.5)"` rotates clockwise.
+		// The earlier formula assumed Y-up math convention and so flipped
+		// the diagonal for any non-cardinal angle.
 		c := math.Cos(g.Angle)
 		s := math.Sin(g.Angle)
 		x1 := 50 - 50*c
-		y1 := 50 + 50*s
+		y1 := 50 - 50*s
 		x2 := 50 + 50*c
-		y2 := 50 - 50*s
+		y2 := 50 + 50*s
 
 		svg.WriteString(fmt.Sprintf(`<linearGradient id="%s" x1="%s%%" y1="%s%%" x2="%s%%" y2="%s%%">`,
 			id,
