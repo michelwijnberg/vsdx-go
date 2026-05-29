@@ -89,6 +89,7 @@ type ResolvedText struct {
 	TextAnchor     string  // "start", "middle", or "end"
 	Baseline       string  // "hanging", "middle", or "alphabetic"
 	Transform      string  // rotation transform
+	WritingMode    string  // SVG writing-mode value when text flows vertically (e.g. "vertical-rl"). Empty for horizontal.
 	Lines          []string // for multi-line text
 	LineHeight     float64
 	SmallCaps      bool    // render as small capitals
@@ -729,13 +730,23 @@ func (b *RenderTreeBuilder) resolveText(shape *Shape, style *EffectiveStyle, tra
 		text.Y = (parentH - (textY + offsetY)) * b.scaleY
 	}
 
-	// Handle text rotation
+	// Handle text rotation. Special-case the cardinal "vertical text" angles
+	// (±π/2) by switching to CSS writing-mode: vertical-rl rather than a
+	// rotate transform. SVG's writing-mode lays out characters individually
+	// in a vertical run with their glyphs upright — matching Visio's UI
+	// rendering of vertical labels. Other angles keep the existing rotate
+	// transform because writing-mode only supports cardinal directions.
 	if txtAngle != 0 {
-		angleDeg := -txtAngle * 180 / math.Pi
-		text.Transform = fmt.Sprintf("rotate(%s %s %s)",
-			fmtPrec(angleDeg, b.precision),
-			fmtPrec(text.X, b.precision),
-			fmtPrec(text.Y, b.precision))
+		const eps = 1e-4
+		if math.Abs(math.Abs(txtAngle)-math.Pi/2) < eps {
+			text.WritingMode = "vertical-rl"
+		} else {
+			angleDeg := -txtAngle * 180 / math.Pi
+			text.Transform = fmt.Sprintf("rotate(%s %s %s)",
+				fmtPrec(angleDeg, b.precision),
+				fmtPrec(text.X, b.precision),
+				fmtPrec(text.Y, b.precision))
+		}
 	}
 
 	return text

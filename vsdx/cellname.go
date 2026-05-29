@@ -21,6 +21,8 @@ const (
 	CellWidth  CellName = "Width"
 	CellHeight CellName = "Height"
 	CellAngle  CellName = "Angle"
+	CellFlipX  CellName = "FlipX"
+	CellFlipY  CellName = "FlipY"
 
 	// Line style cells
 	CellLineWeight  CellName = "LineWeight"

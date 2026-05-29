@@ -124,11 +124,41 @@ func newShape(xml *etree.Element, parent ShapeParent, page *Page) *Shape {
 		}
 	}
 
-	// If shape has no local geometry but references a master, inherit master's geometries.
-	// Note: MasterShape() works here because masters are loaded before pages.
+	// If shape has no local geometry but references a master, inherit the
+	// master's geometries. We DON'T alias `s.Geometries = ms.Geometries`
+	// directly — that would make every Geometry struct on the instance point
+	// at the master's XML/Rows, so a mutation on the instance corrupts the
+	// master (and every sibling instance of the same master). Instead, build
+	// instance-owned Geometry wrappers that initially reference master XML
+	// for reads but localize to a deep-copy on first mutation via
+	// (*Geometry).localize(). See master_isolation_test.go for the regression.
 	if len(s.Geometries) == 0 {
 		if ms := s.MasterShape(); ms != nil && len(ms.Geometries) > 0 {
-			s.Geometries = ms.Geometries
+			for _, mg := range ms.Geometries {
+				ig := &Geometry{
+					xml:   mg.xml,
+					Cells: append([]*GeometryCell(nil), mg.Cells...),
+					Rows:  make(map[string]*GeometryRow, len(mg.Rows)),
+					shape: s,
+				}
+				// Wrap each master row so its `geometry` field points at the
+				// instance's Geometry, not the master's. Without this,
+				// (*GeometryRow).SetX / SetY would call localize on the
+				// master's Geometry and corrupt every sibling instance — the
+				// exact bug we're fixing here.
+				for k, mr := range mg.Rows {
+					ir := &GeometryRow{
+						geometry: ig,
+						xml:      mr.xml,
+						Cells:    make(map[string]*GeometryCell, len(mr.Cells)),
+					}
+					for ck, cv := range mr.Cells {
+						ir.Cells[ck] = cv
+					}
+					ig.Rows[k] = ir
+				}
+				s.Geometries = append(s.Geometries, ig)
+			}
 			if len(s.Geometries) > 0 {
 				s.Geometry = s.Geometries[0]
 			}
@@ -413,6 +443,17 @@ func scaleChildShapeAxis(s *Shape, axis string, scale float64) {
 	}
 }
 
+// widthHeightTokenRE matches a Width or Height TOKEN — not any substring —
+// inside a ShapeSheet formula. Used by scaleNonInhCell to detect cells whose
+// value is already a function of the parent's Width/Height so we don't
+// double-scale them.
+//
+// EC-002: pre-fix this was strings.Contains(f, "Width"), which had false
+// positives on user-defined cells like "WidthForegndColor" or
+// "ScaleHeightFactor". The word-boundary form rejects those while still
+// matching "Width", "Width*0.5", "Sheet.5!Width", "GUARD(Width)", etc.
+var widthHeightTokenRE = regexp.MustCompile(`\b(Width|Height)\b`)
+
 // scaleNonInhCell scales a cell's Value, including F="Inh" cells. We have
 // to scale even Inh cells because the renderer reads Value, and Value for
 // child shapes is captured at authoring time (when instance dims == master
@@ -427,8 +468,7 @@ func scaleNonInhCell(s *Shape, name CellName, scale float64) {
 	if cell == nil {
 		return
 	}
-	f := cell.Formula()
-	if strings.Contains(f, "Width") || strings.Contains(f, "Height") {
+	if widthHeightTokenRE.MatchString(cell.Formula()) {
 		return
 	}
 	cell.SetValue(fmtFloat(toFloat(cell.Value()) * scale))
@@ -442,12 +482,14 @@ func absVal(v float64) float64 {
 }
 
 // scaleGeometryAxis multiplies the named cell ("X" or "Y") of every
-// absolute-coord row in g by scale. Rows whose XML lives in the master's
-// geometry section are skipped — we don't want to mutate the master.
+// absolute-coord row in g by scale. Localizes the geometry first so the
+// mutation lands on instance-owned XML, not on a master that's shared with
+// every sibling instance.
 func scaleGeometryAxis(g *Geometry, cellName string, scale float64) {
 	if g == nil {
 		return
 	}
+	g.localize()
 	for _, row := range g.Rows {
 		if row.xml == nil || row.xml.Parent() != g.xml {
 			continue
@@ -466,6 +508,37 @@ func scaleGeometryAxis(g *Geometry, cellName string, scale float64) {
 	}
 }
 func (s *Shape) SetAngle(v float64)  { s.SetCellValue(CellAngle, fmtFloat(v)) }
+
+// FlipX returns true if the shape is mirrored along its vertical axis.
+// Per MS-VSDX §2.2.3.2.1 step 3 in the canonical 7-step transform: when
+// FlipX=1, the shape's local geometry is mirrored about the y-axis before
+// rotation and the pin is applied.
+func (s *Shape) FlipX() bool { return s.CellValue(CellFlipX) == "1" }
+
+// FlipY returns true if the shape is mirrored along its horizontal axis.
+func (s *Shape) FlipY() bool { return s.CellValue(CellFlipY) == "1" }
+
+// SetFlipX sets (or clears) the FlipX cell. Setting to true causes the
+// renderer to mirror the shape along its vertical axis.
+func (s *Shape) SetFlipX(v bool) {
+	if v {
+		s.SetCellValue(CellFlipX, "1")
+	} else {
+		s.SetCellValue(CellFlipX, "0")
+	}
+	s.clearCellFormula(CellFlipX)
+}
+
+// SetFlipY sets (or clears) the FlipY cell. Setting to true causes the
+// renderer to mirror the shape along its horizontal axis.
+func (s *Shape) SetFlipY(v bool) {
+	if v {
+		s.SetCellValue(CellFlipY, "1")
+	} else {
+		s.SetCellValue(CellFlipY, "0")
+	}
+	s.clearCellFormula(CellFlipY)
+}
 
 func (s *Shape) SetBeginX(v float64) { s.SetCellValue(CellBeginX, fmtFloat(v)) }
 func (s *Shape) SetBeginY(v float64) { s.SetCellValue(CellBeginY, fmtFloat(v)) }
@@ -542,11 +615,39 @@ func (s *Shape) TextStyleID() string { return s.xml.SelectAttrValue("TextStyle",
 
 // --- Style setters ---
 
+// SetLineWeight overrides the shape's line weight to a literal value and
+// clears any formula on the cell (matches the SetFillColor / SetLineColor
+// policy: explicit literal wins over inherited / theme-driven formula).
 func (s *Shape) SetLineWeight(v float64) {
 	s.SetCellValue(CellLineWeight, fmtFloat(v))
+	s.clearCellFormula(CellLineWeight)
 }
-func (s *Shape) SetLineColor(v string) { s.SetCellValue(CellLineColor, v) }
-func (s *Shape) SetFillColor(v string) { s.SetCellValue(CellFillForegnd, v) }
+// SetLineColor sets the line color to an explicit literal and clears any
+// theme-binding formula on that cell. Without the F clear, an existing
+// `F="THEMEGUARD(RGB(...))"` would survive on the local cell and Visio's
+// next open would re-evaluate F, overwriting the V the user just set.
+// Callers that want a theme-tracking color must use SetCellFormula
+// explicitly after this.
+func (s *Shape) SetLineColor(v string) {
+	s.SetCellValue(CellLineColor, v)
+	s.clearCellFormula(CellLineColor)
+}
+
+// SetFillColor sets the foreground fill color to an explicit literal and
+// clears any theme-binding formula on that cell. See SetLineColor for the
+// rationale.
+func (s *Shape) SetFillColor(v string) {
+	s.SetCellValue(CellFillForegnd, v)
+	s.clearCellFormula(CellFillForegnd)
+}
+
+// clearCellFormula removes the F attribute from a local cell, if one exists.
+// No-op if the cell has no local copy (still inherited from master).
+func (s *Shape) clearCellFormula(name string) {
+	if c, ok := s.Cells[name]; ok && c != nil && c.xml != nil && c.xml.Parent() == s.xml {
+		c.xml.RemoveAttr("F")
+	}
+}
 
 // SetTextColor sets the first text color in the Character section.
 func (s *Shape) SetTextColor(v string) {
@@ -605,7 +706,16 @@ func (s *Shape) ensureCharacterCell(cellName, value string) {
 	s.ensureSectionCell("Character", cellName, value)
 }
 
-// ensureSectionCell sets a cell in a named section, creating section and row if needed.
+// ensureSectionCell sets a cell in a named section, creating the section and
+// row when needed.
+//
+// EC-006: when we create a NEW local Row that shadows a master Row, we
+// first copy every cell from the master Row into the new local Row. Visio
+// interprets a partial local Row as fully local — i.e. every cell the
+// master had but we didn't mirror is silently dropped on the next open. By
+// pre-populating the master's siblings (with their full attribute set,
+// including F formulas) we keep the inheritance semantics intact while
+// still letting the caller override the one cell they actually care about.
 func (s *Shape) ensureSectionCell(sectionName, cellName, value string) {
 	section := s.xml.FindElement("Section[@N='" + sectionName + "']")
 	if section == nil {
@@ -613,9 +723,29 @@ func (s *Shape) ensureSectionCell(sectionName, cellName, value string) {
 		section.CreateAttr("N", sectionName)
 	}
 	row := section.FindElement("Row")
-	if row == nil {
+	rowIsNew := row == nil
+	if rowIsNew {
 		row = section.CreateElement("Row")
 		row.CreateAttr("IX", "0")
+		// Copy master's same-section, same-row cells into this newly-local
+		// row so siblings survive Visio's "partial row = fully local" rule.
+		if ms := s.MasterShape(); ms != nil {
+			msSection := ms.XML().FindElement("Section[@N='" + sectionName + "']")
+			if msSection != nil {
+				msRow := msSection.SelectElement("Row")
+				if msRow != nil {
+					for _, mc := range msRow.SelectElements("Cell") {
+						if mc.SelectAttrValue("N", "") == cellName {
+							continue // caller is about to set this one
+						}
+						clone := row.CreateElement("Cell")
+						for _, attr := range mc.Attr {
+							clone.CreateAttr(attr.Key, attr.Value)
+						}
+					}
+				}
+			}
+		}
 	}
 	cell := row.FindElement("Cell[@N='" + cellName + "']")
 	if cell == nil {
@@ -649,10 +779,11 @@ const (
 	LinePatternDashDotDot = 5
 )
 
-// SetLinePattern sets the line pattern.
+// SetLinePattern sets the line pattern and clears any inherited formula.
 // Use LinePatternSolid (1), LinePatternDash (2), LinePatternDot (3), etc.
 func (s *Shape) SetLinePattern(pattern int) {
 	s.SetCellValue(CellLinePattern, strconv.Itoa(pattern))
+	s.clearCellFormula(CellLinePattern)
 }
 
 // Line cap constants for SetLineCap.
@@ -662,47 +793,62 @@ const (
 	LineCapExtended = 2
 )
 
-// SetLineCap sets the line cap style.
+// SetLineCap sets the line cap style and clears any inherited formula.
 // Use LineCapRound (0), LineCapSquare (1), or LineCapExtended (2).
 func (s *Shape) SetLineCap(cap int) {
 	s.SetCellValue(CellLineCap, strconv.Itoa(cap))
+	s.clearCellFormula(CellLineCap)
 }
 
-// SetBeginArrow sets the begin arrow style. Use 13 for standard arrow, 0 for none.
+// SetBeginArrow sets the begin arrow style and clears any inherited formula.
+// Use 13 for standard arrow, 0 for none.
 func (s *Shape) SetBeginArrow(v int) {
 	s.SetCellValue(CellBeginArrow, strconv.Itoa(v))
+	s.clearCellFormula(CellBeginArrow)
 }
 
-// SetEndArrow sets the EndArrow cell value. Use 13 for standard arrow, 0 for none.
+// SetEndArrow sets the EndArrow cell value and clears any inherited formula.
+// Use 13 for standard arrow, 0 for none.
 func (s *Shape) SetEndArrow(v int) {
 	s.SetCellValue(CellEndArrow, strconv.Itoa(v))
+	s.clearCellFormula(CellEndArrow)
 }
 
-// SetRounding sets the corner rounding radius in inches.
+// SetRounding sets the corner rounding radius in inches and clears any
+// inherited formula.
 func (s *Shape) SetRounding(radius float64) {
 	s.SetCellValue(CellRounding, fmtFloat(radius))
+	s.clearCellFormula(CellRounding)
 }
 
 // --- Fill style ---
 
-// SetFillPattern sets the fill pattern. 0=transparent, 1=solid, 2-24=hatches.
+// SetFillPattern sets the fill pattern and clears any inherited formula.
+// 0=transparent, 1=solid, 2-24=hatches.
 func (s *Shape) SetFillPattern(pattern int) {
 	s.SetCellValue(CellFillPattern, strconv.Itoa(pattern))
+	s.clearCellFormula(CellFillPattern)
 }
 
-// SetFillTransparency sets the foreground fill transparency (0.0=opaque, 1.0=fully transparent).
+// SetFillTransparency sets the foreground fill transparency (0.0=opaque,
+// 1.0=fully transparent) and clears any inherited formula.
 func (s *Shape) SetFillTransparency(v float64) {
 	s.SetCellValue(CellFillForegndTrans, fmtFloat(v))
+	s.clearCellFormula(CellFillForegndTrans)
 }
 
-// SetFillBkgndColor sets the background fill color.
+// SetFillBkgndColor sets the background fill color and clears any inherited
+// formula (see SetFillColor for the rationale).
 func (s *Shape) SetFillBkgndColor(v string) {
 	s.SetCellValue(CellFillBkgnd, v)
+	s.clearCellFormula(CellFillBkgnd)
 }
 
-// SetFillBkgndTransparency sets the background fill transparency (0.0=opaque, 1.0=fully transparent).
+// SetFillBkgndTransparency sets the background fill transparency
+// (0.0=opaque, 1.0=fully transparent) and clears any inherited formula.
 func (s *Shape) SetFillBkgndTransparency(v float64) {
 	s.SetCellValue(CellFillBkgndTrans, fmtFloat(v))
+	s.clearCellFormula(CellFillBkgndTrans)
 }
 
 // --- Text block positioning ---
@@ -1322,7 +1468,11 @@ func (s *Shape) AddGeometryRect() *Geometry {
 
 // --- Shape manipulation ---
 
-// Move moves the shape by the given deltas, updating position and geometry.
+// Move translates the shape by the given deltas. For 2D shapes only the
+// pin (PinX/PinY) and geometry rows move. For 1D shapes (connectors) both
+// endpoints (BeginX/Y AND EndX/Y) move as well — leaving EndX/Y anchored
+// while BeginX/Y followed the pin would stretch the connector across the
+// drawing.
 func (s *Shape) Move(xDelta, yDelta float64) {
 	if s.Geometry != nil {
 		s.Geometry.Move(xDelta, yDelta)
@@ -1330,14 +1480,60 @@ func (s *Shape) Move(xDelta, yDelta float64) {
 	if s.HasBeginX() {
 		s.SetBeginX(s.BeginX() + xDelta)
 		s.SetBeginY(s.BeginY() + yDelta)
+		// EndX/Y travel with BeginX/Y for 1D shapes. Only update them when a
+		// local EndX cell actually exists, so we don't materialize endpoint
+		// cells on shapes that don't track them.
+		if s.CellValue(CellEndX) != "" {
+			s.SetEndX(s.EndX() + xDelta)
+			s.SetEndY(s.EndY() + yDelta)
+		}
 	}
 	s.SetX(s.X() + xDelta)
 	s.SetY(s.Y() + yDelta)
 }
 
-// Remove removes this shape from its parent XML element.
+// Remove removes this shape from its parent XML element AND strips any
+// <Connect> elements on the page that reference this shape (or any of its
+// descendant child shapes) as either the connector or the terminal shape.
+//
+// Without the Connect cleanup, removing a shape leaves dangling references
+// in the page's <Connects> section: Visio's open-time validator flags this
+// as a structural error and triggers a repair prompt. The regression-test
+// lives in remove_contracts_test.go.
+//
+// Note: removing a TERMINAL shape leaves the connector shape itself intact
+// at its current geometry — only the Connect bindings to the now-gone shape
+// are stripped. Callers that want full cascade-delete must walk and remove
+// the dangling connector shapes themselves.
 func (s *Shape) Remove() {
+	s.removeOrphanConnects()
 	s.Parent.removeChildShape(s)
+}
+
+// removeOrphanConnects walks the page's <Connect> elements and removes any
+// that reference this shape — or any of its descendant child shapes —
+// through either FromSheet (connector role) or ToSheet (terminal role).
+func (s *Shape) removeOrphanConnects() {
+	if s.Page == nil || s.Page.xml == nil || s.Page.xml.Root() == nil {
+		return
+	}
+	// Collect every shape ID about to disappear (this shape + recursive
+	// child shapes). A group Remove takes all descendants with it; their
+	// Connects need cleanup too.
+	doomed := map[string]bool{s.ID: true}
+	for _, desc := range s.AllShapes() {
+		doomed[desc.ID] = true
+	}
+	// Iterate over a snapshot — we mutate the parent during iteration.
+	for _, connectElem := range append([]*etree.Element(nil), s.Page.xml.Root().FindElements(".//Connect")...) {
+		from := connectElem.SelectAttrValue("FromSheet", "")
+		to := connectElem.SelectAttrValue("ToSheet", "")
+		if doomed[from] || doomed[to] {
+			if parent := connectElem.Parent(); parent != nil {
+				parent.RemoveChild(connectElem)
+			}
+		}
+	}
 }
 
 // removeChildShape removes a child shape from this group shape's XML.
@@ -1651,6 +1847,117 @@ func (s *Shape) FindShapeByAttr(attr, attrValue string) *Shape {
 
 // DataProperties returns the data properties of the shape, indexed by label.
 // Results are cached after the first call.
+// RecalculateDependents walks every cell on this shape, identifies those
+// whose F-formula references the named cell as a word-boundary token, and
+// re-evaluates them via CalcValue, writing the new V-attribute. Returns the
+// number of cells whose V was actually updated.
+//
+// EC-012 minimum-viable dependency walker — one level deep, single shape.
+// Does NOT handle:
+//   - Transitive chains (A→B→C): call recursively / fixed-point yourself
+//   - Cross-shape references (Sheet.N!Cell)
+//   - Cycle detection (cells with circular F refs blow the stack)
+//
+// Typical use: after SetX(newPin) on a 1D shape whose Width has F=EndX-PinX,
+// call shape.RecalculateDependents(CellPinX) so Width's V picks up the new
+// derivation without waiting for Visio's next open.
+func (s *Shape) RecalculateDependents(cellName CellName) int {
+	pattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(string(cellName)) + `\b`)
+	count := 0
+	for name, cell := range s.Cells {
+		if name == string(cellName) || cell == nil {
+			continue
+		}
+		f := cell.Formula()
+		if f == "" || !pattern.MatchString(f) {
+			continue
+		}
+		if v, ok := CalcValue(s, f); ok {
+			cell.SetValue(fmtFloat(v))
+			count++
+		}
+	}
+	return count
+}
+
+// InvalidateInheritanceCaches resets every lazily-cached state that depends
+// on master inheritance. Call this after directly mutating a master shape
+// (or any state that instances may have cached) so subsequent reads of this
+// shape pick up the new master state. EC-003.
+//
+// Safe to call on any shape, including ones without a master. Today this
+// only clears the data-properties cache, but the method is the single
+// public hook future caches should subscribe to.
+func (s *Shape) InvalidateInheritanceCaches() {
+	s.InvalidateDataPropertiesCache()
+}
+
+// InvalidateInstanceCachesForMaster walks every shape on every page of the
+// VisioFile and clears inheritance-derived caches on those whose
+// MasterPageID matches the given master ID. EC-003 — useful after mutating
+// a master shape so all dependent instances re-resolve at next read.
+//
+// NOTE on semantics: this clears caches on the *Shape pointers reachable
+// via AllShapes() at call time. Page.AllShapes() rebuilds Shape structs on
+// each call, so callers who hold their own *Shape pointer must invoke
+// (*Shape).InvalidateInheritanceCaches() on it directly — the file-level
+// helper has no way to reach private pointers.
+//
+// O(shapes) traversal; intended for explicit "I just edited a master" calls,
+// not for hot paths.
+func (v *VisioFile) InvalidateInstanceCachesForMaster(masterPageID string) {
+	for _, p := range v.Pages {
+		for _, s := range p.AllShapes() {
+			if s.MasterPageID == masterPageID {
+				s.InvalidateInheritanceCaches()
+			}
+		}
+	}
+}
+
+// RemoveCell deletes the named cell from this shape's local XML (if
+// present). After this call, reading the cell via CellValue / CellFormula
+// falls back to the master's value, restoring inheritance. No-op when no
+// local cell exists. EC-010.
+//
+// Returns true if a local cell was actually removed.
+func (s *Shape) RemoveCell(name CellName) bool {
+	cell := s.xml.FindElement("Cell[@N='" + string(name) + "']")
+	if cell == nil {
+		return false
+	}
+	s.xml.RemoveChild(cell)
+	delete(s.Cells, string(name))
+	return true
+}
+
+// RevertToInherited is a semantic alias for RemoveCell: explicitly states
+// "let the master drive this property again". Useful in style-editing UIs
+// where the operation is conceptually "revert", not "delete". EC-010.
+func (s *Shape) RevertToInherited(name CellName) bool {
+	return s.RemoveCell(name)
+}
+
+// GeometryAt returns the Geometry section at the given IX index, or nil if
+// out of range. EC-005: compound master shapes carry multiple geometry
+// sections (IX=0, 1, 2, ...). Use this helper to target sections beyond
+// IX=0; shape.Geometry is an alias for Geometries[0] and only ever touches
+// the first section.
+func (s *Shape) GeometryAt(idx int) *Geometry {
+	if idx < 0 || idx >= len(s.Geometries) {
+		return nil
+	}
+	return s.Geometries[idx]
+}
+
+// InvalidateDataPropertiesCache resets the lazy-loaded data-properties cache
+// so the next DataProperties() call reads fresh state from XML. AddDataProperty
+// already calls this; users who mutate the Property section directly via
+// shape.XML() must call this themselves before re-reading DataProperties().
+func (s *Shape) InvalidateDataPropertiesCache() {
+	s.dataProperties = nil
+}
+
 func (s *Shape) DataProperties() map[string]*DataProperty {
 	if s.dataProperties != nil {
 		return s.dataProperties

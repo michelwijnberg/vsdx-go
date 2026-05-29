@@ -87,32 +87,121 @@ func (g *Geometry) StartPos() (float64, float64) {
 	return 0, 0
 }
 
-// Move updates absolute coordinate references in the geometry by the given deltas.
+// needsLocalize reports whether the Geometry's XML is still aliased from
+// the master and a deep-copy is required before mutation. True when the
+// section element's parent isn't this geometry's owning shape — either
+// because the instance has no local section yet, or because g came from
+// the master-inheritance path in newShape.
+func (g *Geometry) needsLocalize() bool {
+	if g.shape == nil || g.xml == nil {
+		return false
+	}
+	return g.xml.Parent() != g.shape.xml
+}
+
+// localize ensures the Geometry's underlying XML is owned by the instance
+// shape rather than aliased from a master. Every mutation entry point MUST
+// call this before writing. After localization g.xml lives under g.shape.xml,
+// and g.Rows / g.Cells are rebuilt to reference the cloned subtree.
+//
+// localize is idempotent: subsequent calls are no-ops because g.xml.Parent()
+// already equals g.shape.xml. For partially-inherited sections (instance has
+// local <Section N="Geometry"> but inherits some rows from master), the
+// section is already local — localize is a no-op there too. Per-row
+// inheritance is handled by (*GeometryRow).localize.
+func (g *Geometry) localize() {
+	if g.shape == nil || g.xml == nil {
+		return
+	}
+	if g.xml.Parent() == g.shape.xml {
+		return
+	}
+	cloned := g.xml.Copy()
+	g.shape.xml.AddChild(cloned)
+	g.xml = cloned
+	// Rebuild from the cloned subtree. We do NOT re-inherit from master here:
+	// the clone is already a full snapshot of the master section.
+	g.Cells = g.Cells[:0]
+	for _, cellElem := range cloned.SelectElements("Cell") {
+		g.Cells = append(g.Cells, newGeometryCell(g, cellElem))
+	}
+	g.Rows = make(map[string]*GeometryRow, len(cloned.SelectElements("Row")))
+	for _, rowElem := range cloned.SelectElements("Row") {
+		gRow := newGeometryRow(g, rowElem, nil)
+		g.Rows[gRow.Index()] = gRow
+	}
+}
+
+// Move updates absolute coordinate references in the geometry by the given
+// deltas. It first localizes the geometry so the mutation lands on a copy
+// owned by this instance, not on the master that all sibling instances share.
+//
+// Per row type, the set of cells that hold absolute X coordinates and the
+// set that hold absolute Y coordinates is fixed. Relative row types
+// (RelMoveTo, RelLineTo, RelCubBezTo, RelQuadBezTo, RelEllipticalArcTo) are
+// fractional in [0, 1] of the shape's Width/Height — they don't translate.
+// Scalar cells like A in ArcTo (bow) or D in NURBSTo (weight) are not
+// coordinates and are left alone. This table closes EC-001.
 func (g *Geometry) Move(xDelta, yDelta float64) {
+	g.localize()
 	for _, r := range g.Rows {
-		rt := strings.ToLower(r.RowType())
-		if rt == "moveto" || rt == "lineto" {
-			if cell := r.Cells["X"]; cell != nil {
-				v := toFloat(cell.Value())
-				cell.SetValue(fmtFloat(v + xDelta))
+		xCells, yCells := moveCoordCells(r.RowType())
+		for _, name := range xCells {
+			if cell := r.Cells[name]; cell != nil {
+				cell.SetValue(fmtFloat(toFloat(cell.Value()) + xDelta))
 			}
-			if cell := r.Cells["Y"]; cell != nil {
-				v := toFloat(cell.Value())
-				cell.SetValue(fmtFloat(v + yDelta))
+		}
+		for _, name := range yCells {
+			if cell := r.Cells[name]; cell != nil {
+				cell.SetValue(fmtFloat(toFloat(cell.Value()) + yDelta))
 			}
 		}
 	}
 }
 
+// moveCoordCells returns the (xCells, yCells) lists for a row type — the
+// cell names whose values are absolute X / Y coordinates and must therefore
+// translate when the shape moves. Returns (nil, nil) for relative or
+// scalar-only row types.
+func moveCoordCells(rowType string) (xCells, yCells []string) {
+	switch strings.ToLower(rowType) {
+	case "moveto", "lineto":
+		return []string{"X"}, []string{"Y"}
+	case "arcto":
+		// X, Y endpoint; A is the bow (scalar, no axis).
+		return []string{"X"}, []string{"Y"}
+	case "ellipticalarcto":
+		// X, Y endpoint + A, B control point. C major/minor ratio (scalar),
+		// D rotation angle (scalar).
+		return []string{"X", "A"}, []string{"Y", "B"}
+	case "ellipse":
+		// X, Y center + A, B point on major axis + C, D point on minor axis.
+		return []string{"X", "A", "C"}, []string{"Y", "B", "D"}
+	case "nurbsto":
+		// X, Y endpoint. A,B,C,D are knots/weights (scalars); E is the
+		// NURBS formula string — leave them alone.
+		return []string{"X"}, []string{"Y"}
+	case "polylineto":
+		// X, Y endpoint; A is the polyline formula string.
+		return []string{"X"}, []string{"Y"}
+	case "splinestart", "splineknot":
+		// X, Y control point. A,B,C,D are knot scalars.
+		return []string{"X"}, []string{"Y"}
+	case "infiniteline":
+		// X, Y first point + A, B second point.
+		return []string{"X", "A"}, []string{"Y", "B"}
+	}
+	return nil, nil
+}
+
 // setRowCoords sets the X, Y coordinates of the nth row of the given type.
 //
-// Only LOCAL rows are considered (rows whose XML element lives inside this
-// geometry section). Rows inherited from a master share their XML element
-// with the master shape, and calling SetX/SetY on them would mutate the
-// master geometry — not what callers want. Equally important: iteration is
-// sorted by IX numerically so picking "index 0" is deterministic, instead
-// of depending on Go's randomised map iteration order.
+// Localizes the geometry first so the mutation lands on instance-owned XML,
+// not on a master shared with sibling instances. Iteration is sorted by IX
+// numerically so picking "index 0" is deterministic, instead of depending on
+// Go's randomised map iteration order.
 func (g *Geometry) setRowCoords(rowType string, x, y float64, index int) {
+	g.localize()
 	type indexed struct {
 		ix int
 		r  *GeometryRow
@@ -123,7 +212,10 @@ func (g *Geometry) setRowCoords(rowType string, x, y float64, index int) {
 			continue
 		}
 		if r.xml.Parent() != g.xml {
-			continue // inherited from master, skip
+			// Row is inherited from master (partial-inheritance section).
+			// Skipping silently matches the prior behaviour; promoting these
+			// rows to local is tracked separately.
+			continue
 		}
 		ix, _ := strconv.Atoi(ixStr)
 		matching = append(matching, indexed{ix, r})
@@ -158,6 +250,7 @@ func (g *Geometry) nextIX() string {
 
 // addRow creates a new geometry row with X and Y cells.
 func (g *Geometry) addRow(rowType string, x, y float64) {
+	g.localize()
 	ix := g.nextIX()
 	addGeoRowXML(g.xml, rowType, ix, fmtFloat(x), fmtFloat(y))
 	rowElem := g.xml.SelectElements("Row")
@@ -179,6 +272,7 @@ func (g *Geometry) AddRelLineTo(x, y float64) { g.addRow("RelLineTo", x, y) }
 
 // AddArcTo adds an ArcTo row with absolute coordinates and bow (arc bulge).
 func (g *Geometry) AddArcTo(x, y, bow float64) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "ArcTo")
@@ -193,6 +287,7 @@ func (g *Geometry) AddArcTo(x, y, bow float64) {
 // (x, y) is the center, (a, b) is a point on the ellipse along the major axis,
 // (c, d) is a point on the ellipse along the minor axis.
 func (g *Geometry) AddEllipse(x, y, a, b, c, d float64) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "Ellipse")
@@ -210,6 +305,7 @@ func (g *Geometry) AddEllipse(x, y, a, b, c, d float64) {
 // (x, y) is the endpoint, a is the control point X, b is the control point Y,
 // c is the major/minor ratio, d is the angle of the major axis.
 func (g *Geometry) AddEllipticalArcTo(x, y, a, b, c, d float64) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "EllipticalArcTo")
@@ -227,6 +323,7 @@ func (g *Geometry) AddEllipticalArcTo(x, y, a, b, c, d float64) {
 // (x, y) is the endpoint, a is the control point X, b is the control point Y,
 // c is the major/minor ratio, d is the angle of the major axis.
 func (g *Geometry) AddRelEllipticalArcTo(x, y, a, b, c, d float64) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "RelEllipticalArcTo")
@@ -244,6 +341,7 @@ func (g *Geometry) AddRelEllipticalArcTo(x, y, a, b, c, d float64) {
 // (x, y) is the endpoint, (a, b) is the first control point, (c, d) is the second control point.
 // All coordinates are relative to shape bounds (0-1 range).
 func (g *Geometry) AddRelCubBezTo(x, y, a, b, c, d float64) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "RelCubBezTo")
@@ -261,6 +359,7 @@ func (g *Geometry) AddRelCubBezTo(x, y, a, b, c, d float64) {
 // (x, y) is the endpoint, (a, b) is the control point.
 // All coordinates are relative to shape bounds (0-1 range).
 func (g *Geometry) AddRelQuadBezTo(x, y, a, b float64) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "RelQuadBezTo")
@@ -276,6 +375,7 @@ func (g *Geometry) AddRelQuadBezTo(x, y, a, b float64) {
 // (x, y) is the endpoint, a is the second-to-last knot, b is the last weight,
 // c is the first knot, d is the first weight, e is the NURBS formula string.
 func (g *Geometry) AddNURBSTo(x, y, a, b, c, d float64, e string) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "NURBSTo")
@@ -293,6 +393,7 @@ func (g *Geometry) AddNURBSTo(x, y, a, b, c, d float64, e string) {
 // AddPolylineTo adds a PolylineTo row for a polyline defined by a formula string.
 // (x, y) is the endpoint, a is the polyline formula (e.g., "POLYLINE(...)").
 func (g *Geometry) AddPolylineTo(x, y float64, a string) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "PolylineTo")
@@ -307,6 +408,7 @@ func (g *Geometry) AddPolylineTo(x, y float64, a string) {
 // (x, y) is the second control point, a is the second knot,
 // b is the first knot, c is the last knot, d is the degree.
 func (g *Geometry) AddSplineStart(x, y, a, b, c float64, d int) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "SplineStart")
@@ -323,6 +425,7 @@ func (g *Geometry) AddSplineStart(x, y, a, b, c float64, d int) {
 // AddSplineKnot adds a SplineKnot row that continues a spline.
 // (x, y) is the control point, a is the knot value.
 func (g *Geometry) AddSplineKnot(x, y, a float64) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "SplineKnot")
@@ -336,6 +439,7 @@ func (g *Geometry) AddSplineKnot(x, y, a float64) {
 // AddInfiniteLine adds an InfiniteLine row that defines an infinite line.
 // (x, y) is a point on the line, (a, b) is a second point on the line.
 func (g *Geometry) AddInfiniteLine(x, y, a, b float64) {
+	g.localize()
 	ix := g.nextIX()
 	row := g.xml.CreateElement("Row")
 	row.CreateAttr("T", "InfiniteLine")
@@ -421,8 +525,19 @@ func (r *GeometryRow) SetIndex(v string) {
 	r.xml.CreateAttr("IX", v)
 }
 
-// SetX sets the X cell value, creating it if needed.
+// SetX sets the X cell value, creating it if needed. If this row is
+// inherited from a master, the parent geometry is localized first and the
+// mutation is redirected to the local copy by IX so that sibling instances
+// of the same master remain unaffected.
 func (r *GeometryRow) SetX(v float64) {
+	if r.geometry != nil && r.geometry.needsLocalize() {
+		ix := r.Index()
+		r.geometry.localize()
+		if localR, ok := r.geometry.Rows[ix]; ok && localR != nil && localR != r {
+			localR.SetX(v)
+			return
+		}
+	}
 	xCell := r.Cells["X"]
 	if xCell == nil {
 		cellElem := etree.NewElement("Cell")
@@ -434,8 +549,17 @@ func (r *GeometryRow) SetX(v float64) {
 	xCell.SetValue(fmtFloat(v))
 }
 
-// SetY sets the Y cell value, creating it if needed.
+// SetY sets the Y cell value, creating it if needed. Like SetX, this
+// localizes inherited geometry before writing.
 func (r *GeometryRow) SetY(v float64) {
+	if r.geometry != nil && r.geometry.needsLocalize() {
+		ix := r.Index()
+		r.geometry.localize()
+		if localR, ok := r.geometry.Rows[ix]; ok && localR != nil && localR != r {
+			localR.SetY(v)
+			return
+		}
+	}
 	yCell := r.Cells["Y"]
 	if yCell == nil {
 		cellElem := etree.NewElement("Cell")

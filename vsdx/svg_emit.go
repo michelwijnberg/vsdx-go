@@ -800,6 +800,9 @@ func (e *SVGEmitter) emitText(svg *strings.Builder, node *RenderNode) {
 		if t.Transform != "" {
 			svg.WriteString(fmt.Sprintf(` transform="%s"`, t.Transform))
 		}
+		if t.WritingMode != "" {
+			svg.WriteString(fmt.Sprintf(` style="writing-mode: %s; text-orientation: upright"`, t.WritingMode))
+		}
 
 		svg.WriteString(">")
 

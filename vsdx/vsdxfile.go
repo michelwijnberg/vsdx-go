@@ -1236,6 +1236,33 @@ func (v *VisioFile) SaveVsdxBytes() ([]byte, error) {
 		}
 	}
 
+	// Update each master page XML and master-level rels. Without this any
+	// in-memory mutation of a master shape (or its descendants) would be
+	// silently dropped on save — and instances referencing the master would
+	// reload the original master at next open. Mirrors the pages loop above.
+	for _, master := range v.MasterPages {
+		if master.xml != nil {
+			data, err := master.xml.WriteToBytes()
+			if err != nil {
+				return nil, fmt.Errorf("serializing %s: %w", master.filename, err)
+			}
+			v.ZipFileContents[master.filename] = data
+		}
+		if master.RelsXML != nil && master.RelsXMLFile != "" {
+			data, err := master.RelsXML.WriteToBytes()
+			if err != nil {
+				return nil, fmt.Errorf("serializing %s: %w", master.RelsXMLFile, err)
+			}
+			v.ZipFileContents[master.RelsXMLFile] = data
+		}
+	}
+
+	// Update masters.xml index. updateMastersXMLInZip is also called from
+	// AddMaster/DeleteMaster at mutation time, but calling it again here
+	// catches direct edits to v.MastersXML() that bypassed those entry
+	// points.
+	v.updateMastersXMLInZip()
+
 	// Update other XML files
 	if v.rootRelsXML != nil {
 		data, err := v.rootRelsXML.WriteToBytes()
