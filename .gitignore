@@ -34,12 +34,16 @@ vsdx-svg/*-generated/
 /text-compare
 /arrow-inspect
 /vsdx-test
+/comprehensive-compare
+/comprehensive-gen
+/probe-conn
 
 # Render-comparison output (generated; goldens live alongside their sources)
 /render-compare-output/
 /render-compare-output-mutations/
 /render-compare-output-visio/
 /render-compare-output-batch/
+/render-compare-output-comprehensive/
 
 # Per-recipe vsdx-go re-render helper, not the committed baseline golden
 vsdx-svg-mutations/*-vsdxgo.svg

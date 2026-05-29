@@ -220,6 +220,17 @@ func (r *GeometryResolver) resolve() *ResolvedGeomResult {
 		return result
 	}
 
+	// Apply corner rounding if the shape has a Rounding cell > 0. MS-VSDX
+	// §2.2.7.5: Rounding rounds every right-angle corner. We only handle
+	// the simple axis-aligned rectangle case here (Visio's <rect rx ry>
+	// equivalent); paths with other shapes pass through unchanged.
+	if r.style.Rounding > 0 {
+		ppi := 72.0
+		if rounded := roundAxisAlignedRectangle(pathData, r.style.Rounding*ppi); rounded != "" {
+			pathData = rounded
+		}
+	}
+
 	// Apply arrow setbacks BEFORE finalizing path
 	// This is critical: setbacks must be applied in resolved coordinate space
 	// Include stroke width in marker ID to allow per-stroke-width marker sizing
@@ -1628,4 +1639,133 @@ func (r *GeometryResolver) findPrevPoint(pathData string) (float64, float64) {
 func parseFloat(s string) (float64, bool) {
 	v, err := strconv.ParseFloat(s, 64)
 	return v, err == nil
+}
+
+// roundAxisAlignedRectangle rewrites a 5-point closed rectangle path
+// (1 MoveTo + 4 LineTo segments forming an axis-aligned box) into a
+// rounded-rectangle path with arcs at each corner. Returns "" if the
+// path is not a recognizable axis-aligned rectangle.
+//
+// radius is in the same units as the path (SVG pixels at 72 ppi).
+// The corner radius is automatically clamped to half the smallest side.
+func roundAxisAlignedRectangle(pathData string, radius float64) string {
+	if radius <= 0 {
+		return ""
+	}
+
+	// Tokenise: split on whitespace and on letters that introduce commands.
+	// We're looking for the pattern: M x y L x y L x y L x y L x y [Z]
+	type point struct{ x, y float64 }
+	var pts []point
+	var cmd byte
+	idx := 0
+	skipWS := func() {
+		for idx < len(pathData) && (pathData[idx] == ' ' || pathData[idx] == ',' || pathData[idx] == '\t' || pathData[idx] == '\n') {
+			idx++
+		}
+	}
+	readNum := func() (float64, bool) {
+		skipWS()
+		start := idx
+		for idx < len(pathData) {
+			c := pathData[idx]
+			if (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E' {
+				idx++
+				continue
+			}
+			break
+		}
+		if start == idx {
+			return 0, false
+		}
+		return parseFloat(pathData[start:idx])
+	}
+
+	for idx < len(pathData) {
+		skipWS()
+		if idx >= len(pathData) {
+			break
+		}
+		c := pathData[idx]
+		if c == 'M' || c == 'L' || c == 'Z' || c == 'z' {
+			cmd = c
+			idx++
+			if cmd == 'Z' || cmd == 'z' {
+				continue
+			}
+			x, ok1 := readNum()
+			y, ok2 := readNum()
+			if !ok1 || !ok2 {
+				return ""
+			}
+			pts = append(pts, point{x, y})
+			continue
+		}
+		// Unknown command → not a simple rectangle; bail.
+		return ""
+	}
+
+	// Must have exactly 5 points (M + 4 L, closing the rectangle).
+	if len(pts) != 5 {
+		return ""
+	}
+
+	// Closure: last point equals first.
+	const eps = 1e-6
+	if math.Abs(pts[4].x-pts[0].x) > eps || math.Abs(pts[4].y-pts[0].y) > eps {
+		return ""
+	}
+
+	// Each of the 4 segments must be axis-aligned.
+	for i := 0; i < 4; i++ {
+		dx := math.Abs(pts[i+1].x - pts[i].x)
+		dy := math.Abs(pts[i+1].y - pts[i].y)
+		if dx > eps && dy > eps {
+			return ""
+		}
+	}
+
+	// Bounding box.
+	minX, minY := pts[0].x, pts[0].y
+	maxX, maxY := pts[0].x, pts[0].y
+	for _, p := range pts[1:] {
+		if p.x < minX {
+			minX = p.x
+		}
+		if p.x > maxX {
+			maxX = p.x
+		}
+		if p.y < minY {
+			minY = p.y
+		}
+		if p.y > maxY {
+			maxY = p.y
+		}
+	}
+	w, h := maxX-minX, maxY-minY
+	if w <= eps || h <= eps {
+		return ""
+	}
+
+	rad := radius
+	if rad > w/2 {
+		rad = w / 2
+	}
+	if rad > h/2 {
+		rad = h / 2
+	}
+
+	// Emit CW rounded rectangle starting at the top of the top-left arc.
+	// Sweep flag 1 = clockwise (matches positive-Y-down screen coords).
+	fmtN := func(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+	return "M" + fmtN(minX+rad) + " " + fmtN(minY) +
+		" L" + fmtN(maxX-rad) + " " + fmtN(minY) +
+		" A" + fmtN(rad) + " " + fmtN(rad) + " 0 0 1 " + fmtN(maxX) + " " + fmtN(minY+rad) +
+		" L" + fmtN(maxX) + " " + fmtN(maxY-rad) +
+		" A" + fmtN(rad) + " " + fmtN(rad) + " 0 0 1 " + fmtN(maxX-rad) + " " + fmtN(maxY) +
+		" L" + fmtN(minX+rad) + " " + fmtN(maxY) +
+		" A" + fmtN(rad) + " " + fmtN(rad) + " 0 0 1 " + fmtN(minX) + " " + fmtN(maxY-rad) +
+		" L" + fmtN(minX) + " " + fmtN(minY+rad) +
+		" A" + fmtN(rad) + " " + fmtN(rad) + " 0 0 1 " + fmtN(minX+rad) + " " + fmtN(minY) +
+		" Z"
 }

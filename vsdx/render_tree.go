@@ -213,11 +213,14 @@ func (b *RenderTreeBuilder) buildNodeWithOffset(shape *Shape, zOrder int, parent
 		node.Geometry = b.resolveAllGeometryWithOffset(shape, node.Style, parentW, parentH, offsetX, offsetY, node)
 	}
 
-	// Resolve text only for shapes with geometry.
-	// Group shapes without geometry should not render their own text -
-	// their text is typically for metadata/labeling, not display.
-	// This matches legacy behavior where text is rendered per geometry.
-	if node.Visible && shape.Text() != "" && len(node.Geometry) > 0 {
+	// Resolve text for shapes with geometry, OR for group shapes that have
+	// an explicit local <Text> element (groups don't carry geometry but can
+	// own visible label text — matches Visio's behaviour of emitting the
+	// group label in a separate v:groupContext="groupContent" block).
+	// Inherited (master-fallback) text on geometry-less groups is still
+	// suppressed to avoid duplicates from §9 in DIVERGENCE_STATUS.
+	hasLocalText := shape.XML().FindElement("Text") != nil
+	if node.Visible && shape.Text() != "" && (len(node.Geometry) > 0 || hasLocalText) {
 		negH := shape.Height() < 0
 		// Use b.rootH for Y-flip (matches legacy behavior)
 		node.Text = b.resolveText(shape, node.Style, node.Transform, offsetX, offsetY, b.rootH, negH)
