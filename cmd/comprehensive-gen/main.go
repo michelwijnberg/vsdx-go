@@ -58,6 +58,30 @@ func baseShape(p *vsdx.Page, cx, cy, w, h float64, label string) *vsdx.Shape {
 	return s
 }
 
+// borderedShape: like baseShape but builds the rectangle geometry manually
+// (without NoLine=1), so the shape's LinePattern / LineWeight / LineCap are
+// actually visible. Use this on pages that demonstrate line styling.
+func borderedShape(p *vsdx.Page, sl slot, label string) *vsdx.Shape {
+	s := p.AddShape()
+	s.SetX(sl.cx)
+	s.SetY(sl.cy)
+	s.SetWidth(sl.w)
+	s.SetHeight(sl.h)
+	s.SetLocX(sl.w / 2)
+	s.SetLocY(sl.h / 2)
+	g := s.AddGeometry()
+	g.AddMoveTo(0, 0)
+	g.AddLineTo(sl.w, 0)
+	g.AddLineTo(sl.w, sl.h)
+	g.AddLineTo(0, sl.h)
+	g.AddLineTo(0, 0)
+	s.SetFillColor("#ffffff")
+	s.SetLineColor("#333333")
+	s.SetLineWeight(0.025)
+	s.SetText(label)
+	return s
+}
+
 // setPageSize stamps PageWidth/PageHeight on the page. We need the
 // PageSheet inside pages.xml (Visio reads dimensions from there, not from
 // each page's content XML); vsdx-go's Page.SetWidth/SetHeight already
@@ -492,14 +516,14 @@ func buildLinesPage(v *vsdx.VisioFile) {
 	cellW, cellH := 2.0, 0.7
 	mx, mt := 0.4, 0.4
 
-	// Row 0-1: line patterns 1-10 (Visio supports 1-23)
+	// Row 0-1: line patterns 1-10 (Visio supports 1-23). Use borderedShape
+	// so the dashed/dotted border is actually visible — _baseShape uses
+	// AddGeometryRect which sets NoLine=1 on the geometry, hiding the
+	// border regardless of the shape-level LineColor/LinePattern.
 	for i, pat := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10} {
 		col, row := i%5, i/5
-		s := _baseShape(p, gx(col, row, cellW, cellH, mx, mt),
+		s := borderedShape(p, gx(col, row, cellW, cellH, mx, mt),
 			fmt.Sprintf("line-pattern-%02d", pat))
-		s.SetFillColor("#ffffff")
-		s.SetLineColor("#333333")
-		s.SetLineWeight(0.025)
 		s.SetLinePattern(pat)
 	}
 
@@ -510,27 +534,27 @@ func buildLinesPage(v *vsdx.VisioFile) {
 		"line-weight-4pt", "line-weight-8pt",
 	}
 	for i, w := range weights {
-		s := _baseShape(p, gx(i, 2, cellW, cellH, mx, mt), weightLabels[i])
+		s := borderedShape(p, gx(i, 2, cellW, cellH, mx, mt), weightLabels[i])
 		s.SetLineWeight(w)
 	}
 
 	// Row 3: line caps + line gradient + color
-	s := _baseShape(p, gx(0, 3, cellW, cellH, mx, mt), "line-cap-round")
+	s := borderedShape(p, gx(0, 3, cellW, cellH, mx, mt), "line-cap-round")
 	s.SetLineWeight(0.06)
 	s.SetLineCap(vsdx.LineCapRound)
-	s = _baseShape(p, gx(1, 3, cellW, cellH, mx, mt), "line-cap-square")
+	s = borderedShape(p, gx(1, 3, cellW, cellH, mx, mt), "line-cap-square")
 	s.SetLineWeight(0.06)
 	s.SetLineCap(vsdx.LineCapSquare)
-	s = _baseShape(p, gx(2, 3, cellW, cellH, mx, mt), "line-cap-extended")
+	s = borderedShape(p, gx(2, 3, cellW, cellH, mx, mt), "line-cap-extended")
 	s.SetLineWeight(0.06)
 	s.SetLineCap(vsdx.LineCapExtended)
 
-	s = _baseShape(p, gx(3, 3, cellW, cellH, mx, mt), "line-gradient-red-to-blue")
+	s = borderedShape(p, gx(3, 3, cellW, cellH, mx, mt), "line-gradient-red-to-blue")
 	s.SetLineWeight(0.06)
 	s.SetLineGradient(0,
 		[]vsdx.GradientStop{{Position: 0, Color: "#cc0000"}, {Position: 1, Color: "#0044cc"}})
 
-	s = _baseShape(p, gx(4, 3, cellW, cellH, mx, mt), "line-color-custom-rgb")
+	s = borderedShape(p, gx(4, 3, cellW, cellH, mx, mt), "line-color-custom-rgb")
 	s.SetLineWeight(0.04)
 	s.SetLineColor("#ff8800")
 }
