@@ -19,7 +19,8 @@ type SVGEmitter struct {
 	scale          float64 // scale factor (pixels per inch)
 	negativeWidth  bool    // original shape had negative width (connector going left)
 	negativeHeight bool    // original shape had negative height (connector going down)
-	shadowFilterID string  // unique filter ID for shadows in this shape
+	shadowFilterID   string             // unique filter ID for shadows in this shape
+	softEdgesFilters map[string]float64 // collected soft-edge filter IDs → blur radius (pt)
 }
 
 // NewSVGEmitter creates a new emitter for the given render tree.
@@ -105,7 +106,9 @@ func (e *SVGEmitter) Emit() []byte {
 	if e.node.Shape != nil && e.node.Shape.ID != "" {
 		shadowFilterID = fmt.Sprintf("shadow_blur_%s", e.node.Shape.ID)
 	}
-	if len(markers) > 0 || len(gradients) > 0 || hasShadows || len(fillPatterns) > 0 {
+	// Collect soft-edge filter IDs upfront so we can emit them in <defs>.
+	softEdges := e.collectSoftEdges(e.node)
+	if len(markers) > 0 || len(gradients) > 0 || hasShadows || len(fillPatterns) > 0 || len(softEdges) > 0 {
 		svg.WriteString("  <defs>\n")
 		for _, m := range markers {
 			svg.WriteString(e.emitMarker(m))
@@ -127,9 +130,18 @@ func (e *SVGEmitter) Emit() []byte {
 			svg.WriteString(fmt.Sprintf(`    <filter id="%s"><feGaussianBlur stdDeviation="2"/></filter>`, shadowFilterID))
 			svg.WriteByte('\n')
 		}
+		// Soft-edges blur filters. Visio's SVG export drops these; we emit
+		// them as feGaussianBlur in user-space units (points). stdDeviation
+		// equals SoftEdgesSize so a "5pt" soft edge produces a 5-unit blur.
+		for id, sizePt := range softEdges {
+			svg.WriteString(fmt.Sprintf(`    <filter id="%s" x="-20%%" y="-20%%" width="140%%" height="140%%"><feGaussianBlur stdDeviation="%s"/></filter>`,
+				id, e.fmtNum(sizePt)))
+			svg.WriteByte('\n')
+		}
 		svg.WriteString("  </defs>\n")
 	}
 	e.shadowFilterID = shadowFilterID // store for use in emitShadowPath
+	e.softEdgesFilters = softEdges    // store for emitSinglePath lookup
 
 	// Check for rotation on root shape
 	shapeAngle := toFloat(e.node.Shape.CellValue("Angle"))
@@ -187,6 +199,29 @@ func (e *SVGEmitter) collectGradientsRecursive(node *RenderNode, result map[stri
 	}
 	for _, child := range node.Children {
 		e.collectGradientsRecursive(child, result)
+	}
+}
+
+// collectSoftEdges walks the tree and returns a map from filter ID to blur
+// radius (in points) for every path that requests a soft-edges effect.
+func (e *SVGEmitter) collectSoftEdges(node *RenderNode) map[string]float64 {
+	result := make(map[string]float64)
+	e.collectSoftEdgesRecursive(node, result)
+	return result
+}
+
+func (e *SVGEmitter) collectSoftEdgesRecursive(node *RenderNode, result map[string]float64) {
+	if node == nil {
+		return
+	}
+	for _, p := range node.Geometry {
+		if p.SoftEdgesSize > 0 {
+			id := fmt.Sprintf("softedges_%s", e.fmtNum(p.SoftEdgesSize))
+			result[id] = p.SoftEdgesSize
+		}
+	}
+	for _, child := range node.Children {
+		e.collectSoftEdgesRecursive(child, result)
 	}
 }
 
@@ -703,6 +738,11 @@ func (e *SVGEmitter) emitSinglePath(svg *strings.Builder, path *ResolvedPath) {
 		attrs = append(attrs, fmt.Sprintf(`marker-end="%s"`, path.MarkerEndID))
 	}
 	// Note: FilterID is used for shadow lookup, not applied directly to path
+	if path.SoftEdgesSize > 0 {
+		// Filter was registered in <defs> by the pre-walk; just reference it.
+		filterID := fmt.Sprintf("softedges_%s", e.fmtNum(path.SoftEdgesSize))
+		attrs = append(attrs, fmt.Sprintf(`filter="url(#%s)"`, filterID))
+	}
 
 	svg.WriteString(fmt.Sprintf(`  <path d="%s" %s/>`, path.D, strings.Join(attrs, " ")))
 	svg.WriteByte('\n')

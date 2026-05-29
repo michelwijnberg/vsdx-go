@@ -42,6 +42,12 @@ type EffectiveStyle struct {
 	ShapeShdwBlur     float64 // Blur radius in points
 	ShapeShdwScaleFactor float64 // Scale factor
 
+	// Soft Edges (MS-VSDX §2.2.7.3.5): renders as a Gaussian blur applied
+	// to the shape's outline. Visio's UI shows this; Visio's SVG export
+	// drops it. Implementing it here makes vsdx-go's output strictly more
+	// complete than Visio's own export for these shapes.
+	SoftEdgesSize float64 // Soft-edge radius in points
+
 	// Text properties
 	TextColor     string  // Text color
 	FontSize          float64 // Font size in points
@@ -208,30 +214,44 @@ func (es *EffectiveStyle) resolveShadowProperties(s *Shape) {
 		es.ShdwForegndTrans = v
 	}
 
-	// ShapeShdwType
-	if v := s.resolveIntCell("ShapeShdwType"); v >= 0 {
+	// Shadow geometry cells. Two naming conventions exist in real Visio
+	// files: older versions use ShapeShdw* (e.g. ad-hoc-exploration.vsdx),
+	// Visio 2021's resave path uses the un-prefixed Shdw* names. Try both;
+	// the un-prefixed names win when present because that's what current
+	// Visio writes during a normal save.
+	if v := s.resolveIntCell("ShdwType"); v > 0 {
+		es.ShapeShdwType = v
+	} else if v := s.resolveIntCell("ShapeShdwType"); v >= 0 {
 		es.ShapeShdwType = v
 	}
 
-	// ShapeShdwOffsetX (inches to points). Shadow offsets can be negative.
-	if v, ok := s.resolveSignedNumericCell("ShapeShdwOffsetX"); ok {
+	if v, ok := s.resolveSignedNumericCell("ShdwOffsetX"); ok {
+		es.ShapeShdwOffsetX = v * 72.0
+	} else if v, ok := s.resolveSignedNumericCell("ShapeShdwOffsetX"); ok {
 		es.ShapeShdwOffsetX = v * 72.0
 	}
 
-	// ShapeShdwOffsetY (inches to points). Shadow offsets can be negative
-	// (Visio convention: negative Y = shadow drops downward in screen space).
-	if v, ok := s.resolveSignedNumericCell("ShapeShdwOffsetY"); ok {
+	if v, ok := s.resolveSignedNumericCell("ShdwOffsetY"); ok {
+		es.ShapeShdwOffsetY = v * 72.0
+	} else if v, ok := s.resolveSignedNumericCell("ShapeShdwOffsetY"); ok {
 		es.ShapeShdwOffsetY = v * 72.0
 	}
 
-	// ShapeShdwBlur (inches to points)
-	if v := s.resolveNumericCell("ShapeShdwBlur"); v >= 0 {
+	if v := s.resolveNumericCell("ShdwBlur"); v > 0 {
+		es.ShapeShdwBlur = v * 72.0
+	} else if v := s.resolveNumericCell("ShapeShdwBlur"); v >= 0 {
 		es.ShapeShdwBlur = v * 72.0
 	}
 
-	// ShapeShdwScaleFactor
-	if v := s.resolveNumericCell("ShapeShdwScaleFactor"); v > 0 {
+	if v := s.resolveNumericCell("ShdwScaleFactor"); v > 0 {
 		es.ShapeShdwScaleFactor = v
+	} else if v := s.resolveNumericCell("ShapeShdwScaleFactor"); v > 0 {
+		es.ShapeShdwScaleFactor = v
+	}
+
+	// SoftEdgesSize is in points per MS-VSDX (e.g. 5 = 5pt blur radius).
+	if v := s.resolveNumericCell("SoftEdgesSize"); v > 0 {
+		es.SoftEdgesSize = v
 	}
 
 	// Theme effects fallback (MS-VSDX §2.2.7.4.3 QuickStyle effects matrix).

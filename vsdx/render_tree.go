@@ -58,6 +58,7 @@ type ResolvedPath struct {
 	GradientID    string  // gradient definition ID
 	FillPatternID string  // fill pattern ID for hatching (patterns 2-24)
 	FilterID      string  // filter (shadow) ID
+	SoftEdgesSize float64 // soft-edges blur radius in points (0 = no soft edges)
 	NoShow        bool    // geometry-level hidden
 }
 
@@ -423,6 +424,14 @@ func (b *RenderTreeBuilder) resolveAllGeometryWithOffset(shape *Shape, style *Ef
 			path.GradientID = gradID
 			path.Fill = fmt.Sprintf("url(#%s)", gradID)
 			node.Gradients[gradID] = gradient
+		}
+
+		// Soft-edges blur: Visio's SVG export drops this, but it's a
+		// standard MS-VSDX effect (§2.2.7.3.5) that maps cleanly to an
+		// SVG <feGaussianBlur>. Implementing it makes vsdx-go strictly
+		// more complete than Visio's own export.
+		if style.SoftEdgesSize > 0 {
+			path.SoftEdgesSize = style.SoftEdgesSize
 		}
 
 		// Create shadow if enabled
