@@ -342,8 +342,14 @@ text.X = (textX + offsetX) * b.scaleX
 **Rationale**: Would require Paragraph section parsing and bullet rendering.
 
 #### 31. Vertical Text Orientation
-**Status**: NEEDS_WORK  
-**Rationale**: SVG supports via writing-mode. Need to detect Visio property.
+**Status**: FIXED  
+**Evidence**:
+- Vertical text in Visio is encoded via the `TxtAngle` cell (rotation in radians). `cellname.go` defines `CellTxtAngle`; `shape.go:865` exposes `SetTxtAngle(rad)`.
+- `render_tree.go:733-748` now distinguishes cardinal vertical angles (±π/2 within 1e-4) from other rotations: the former route through SVG `writing-mode: vertical-rl` + `text-orientation: upright`, while other angles keep the existing `rotate(angleDeg textX textY)` transform.
+- `svg_emit.go:803` emits the writing-mode style attribute when set.
+- The cardinal-angle special case matches Visio's own UI layout (characters stacked vertically with upright glyphs) — confirmed by the comprehensive-batch Visio export.
+- Mutation-corpus fixture `vsdx-svg-mutations/txtangle-vertical-90deg.{vsdx,svg}` (TxtAngle = π/2) carries SSIM = 1.000 baseline.
+**Note**: Visio's CJK-style writing-mode is a separate concern and is tracked under #32 CJK Layout (BLOCKED_VISIO_SEMANTICS).
 
 #### 32. CJK Layout
 **Status**: BLOCKED_VISIO_SEMANTICS  
@@ -356,14 +362,25 @@ text.X = (textX + offsetX) * b.scaleX
 **Rationale**: Would require user-defined marker parsing.
 
 #### 34. Arrow Placement on Curves
-**Status**: NEEDS_WORK  
-**Rationale**: Current implementation shortens straight segments only.
+**Status**: FIXED  
+**Evidence**:
+- `geometry_resolve.go:1252-1267` (shortenPathStart, `L` case) shortens straight tail by linear interpolation.
+- `geometry_resolve.go:1268-1318` (shortenPathStart, `C` case) shortens a cubic-Bezier head via `subdivideCubicByChord` — proper de Casteljau subdivision that lands the new start at the requested setback distance ALONG the curve, not along the start tangent.
+- `geometry_resolve.go:1528-1559` (shortenPathEnd) mirrors the same logic for the trailing endpoint.
+- NURBSTo rows are emitted as cubic Bezier (`C`) in the SVG path, so curved connectors flow through the `C` branch automatically.
+- Mutation-corpus fixture `vsdx-svg-mutations/arrow-on-connector.{vsdx,svg}` pins the straight-arrow case (SSIM = 1.000). The curve case is exercised indirectly by `vsdx-svg/logical-architecture.vsdx` and the other static-corpus fixtures (NURBSTo connectors with arrows).
+- Visual verification: bidirectional arrows on the test4_connectors A↔B connector land their tips on the shape edges rather than inside or beyond.
 
 ### Transform
 
 #### 35. FlipX/FlipY
-**Status**: NEEDS_WORK  
-**Rationale**: Separate from negative dimensions. Need to check FlipX/FlipY cells.
+**Status**: FIXED  
+**Evidence**:
+- `cellname.go`: added `CellFlipX`, `CellFlipY` constants.
+- `shape.go`: added `FlipX()`, `FlipY()` getters and `SetFlipX(bool)`, `SetFlipY(bool)` setters (with F-clear policy per EC-011 convention).
+- `internal/renderpage/renderpage.go`: when FlipX or FlipY is set, the inner shape SVG is split into text vs geometry. The geometry-only group is wrapped in `translate(±w, ±h) scale(±1, ±1)`; text elements are emitted as siblings in the outer non-flipped translate so labels stay upright (Visio UI semantics — confirmed by the comprehensive-batch Visio export, see render-compare-output-batch/).
+- Mutation-corpus fixtures `vsdx-svg-mutations/flipx-shape-mirrored.{vsdx,svg}` and `flipy-shape-mirrored.{vsdx,svg}` carry SSIM = 1.000 baseline.
+- Visual verification against a Visio-exported golden: the flipped shape's geometry-bbox mirrors as expected while "FlipX" / "FlipY" text labels read normally — matching Visio's own rendering.
 
 #### 36. Skew Transforms
 **Status**: UNSUPPORTED_BY_DESIGN  
@@ -392,8 +409,12 @@ text.X = (textX + offsetX) * b.scaleX
 ### Group
 
 #### 41. Group Clip Bounds
-**Status**: NEEDS_WORK  
-**Rationale**: SVG supports clip-path. Need to detect Visio property.
+**Status**: VALIDATED_INTENTIONAL  
+**Evidence**:
+- MS-VSDX defines no general "clip children to group bbox" cell on Group shapes. The only clipping-related cell in the spec is `ClippingPath` on individual Foreign (image) shapes, which vsdx-go already handles (`foreign.go:277`).
+- In Microsoft Visio's UI, group shapes do NOT clip children to bounds by default — a child whose geometry extends outside the parent group renders at full extent. vsdx-go matches this default.
+- A survey of the bundled fixtures (`tests/*.vsdx`) and the static SSIM corpus (`vsdx-svg/*.vsdx`) found zero shapes carrying a group-level clipping property.
+- **Conclusion**: there is no Visio property to detect for this divergence; the documented "need to detect Visio property" is a phantom requirement. If a future Visio document surfaces with explicit group-clipping semantics, this entry should be reopened with the specific cell name as evidence.
 
 ### Page
 
