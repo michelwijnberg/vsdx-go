@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="8.2677in" height="11.6929in" viewBox="0 0 595.28 841.89">
+<g transform="translate(18.00 18.00)">
+  <path d="M0 113.39L155.91 113.39L155.91 0L0 0L0 113.39" fill="none" stroke="#FF0000" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="77.95" y="60.29" text-anchor="middle" dominant-baseline="alphabetic" fill="#000000" font-size="12" font-weight="normal" font-style="normal">Line Color
+</text>
+</g>
+<g transform="translate(219.69 18.00)">
+  <path d="M0 113.39L155.91 113.39L155.91 0L0 0L0 113.39" fill="none" stroke="#000000" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="77.95" y="60.29" text-anchor="middle" dominant-baseline="alphabetic" fill="#FF0000" font-size="12" font-weight="normal" font-style="normal">Text Color
+</text>
+</g>
+<g transform="translate(421.37 18.00)">
+  <path d="M0 113.39L155.91 113.39L155.91 0L0 0L0 113.39" fill="#CC0000" stroke="#000000" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="77.95" y="60.29" text-anchor="middle" dominant-baseline="alphabetic" fill="#FFFFFF" font-size="12" font-weight="normal" font-style="normal">Fill Color
+</text>
+</g>
+</svg>

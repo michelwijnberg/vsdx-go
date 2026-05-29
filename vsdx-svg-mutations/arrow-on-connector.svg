@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="8.2677in" height="11.6929in" viewBox="0 0 595.28 841.89">
+<g transform="translate(18.00 18.00)">
+  <path d="M0 113.39L155.91 113.39L155.91 0L0 0L0 113.39" fill="none" stroke="#000000" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="77.95" y="60.29" text-anchor="middle" dominant-baseline="alphabetic" fill="#000000" font-size="12" font-weight="normal" font-style="normal">Shape A
+</text>
+</g>
+<g transform="translate(219.69 18.00)">
+  <path d="M0 113.39L155.91 113.39L155.91 0L0 0L0 113.39" fill="none" stroke="#000000" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="77.95" y="60.29" text-anchor="middle" dominant-baseline="alphabetic" fill="#000000" font-size="12" font-weight="normal" font-style="normal">Shape B
+</text>
+</g>
+<g transform="translate(120.47 189.92)">
+  <path d="M0 113.39L155.91 113.39L155.91 0L0 0L0 113.39" fill="none" stroke="#000000" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="77.95" y="60.29" text-anchor="middle" dominant-baseline="alphabetic" fill="#000000" font-size="12" font-weight="normal" font-style="normal">Shape C
+</text>
+</g>
+<g transform="translate(173.91 67.61)">
+  <defs>
+    <marker id="arrow_13_2_000000_10_start" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="10.53" markerHeight="7.02" markerUnits="strokeWidth" orient="auto-start-reverse" overflow="visible" preserveAspectRatio="none"><path d="M 0 10 L 10 5 L 0 0 L 0 10 z" fill="#000000" stroke="none" stroke-width="1.14" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="arrow_13_2_000000_10_end" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="10.53" markerHeight="7.02" markerUnits="strokeWidth" orient="auto" overflow="visible" preserveAspectRatio="none"><path d="M 0 10 L 10 5 L 0 0 L 0 10 z" fill="#000000" stroke="none" stroke-width="1.14" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  </defs>
+  <path d="M10.53 7.09L35.25 7.09" fill="none" stroke="#000000" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" marker-start="url(#arrow_13_2_000000_10_start)" marker-end="url(#arrow_13_2_000000_10_end)"/>
+</g>
+<g transform="translate(240.94 131.39)">
+  <path d="M7.09 -0L7.09 58.54" fill="none" stroke="#000000" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</svg>
