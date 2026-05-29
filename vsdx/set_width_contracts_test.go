@@ -145,3 +145,67 @@ func TestSetWidthContract_FrameworkNegativeControl(t *testing.T) {
 	// Silence unused-import warning if we ever drop strings.
 	_ = strings.Contains
 }
+
+// 7) Multi-cell geometry scaling. For row types with more than one
+// coordinate cell per axis (Ellipse: X+A+C on X, Y+B+D on Y) SetWidth and
+// SetHeight must scale ALL of them. Regression: an earlier scaleGeometryAxis
+// only touched the cell literally named "X" / "Y", leaving A/B/C/D stale.
+// On a Can stencil this caused the lip ellipse to render at the master's
+// original size on top of a body that scaled correctly — the resized cylinder
+// rendered visually larger than the dragged bbox.
+func TestSetWidthContract_ScalesAllEllipseCoordCells(t *testing.T) {
+	data := loadFixtureBytes(t, setWidthFixture)
+	v := openFromBytes(t, data)
+	defer v.Close()
+	s := findShapeByName(t, v, "Can.15")
+
+	ellipseBefore := findEllipseRow(t, s)
+	x0 := toFloat(ellipseBefore.Cells["X"].Value())
+	a0 := toFloat(ellipseBefore.Cells["A"].Value())
+	c0 := toFloat(ellipseBefore.Cells["C"].Value())
+	y0 := toFloat(ellipseBefore.Cells["Y"].Value())
+	b0 := toFloat(ellipseBefore.Cells["B"].Value())
+	d0 := toFloat(ellipseBefore.Cells["D"].Value())
+	w0 := s.Width()
+	h0 := s.Height()
+
+	s.SetWidth(w0 * 2.5)
+	s.SetHeight(h0 * 1.75)
+
+	ellipseAfter := findEllipseRow(t, s)
+	checkScaled := func(name string, before, after, scale float64) {
+		want := before * scale
+		// Tolerate normal float jitter.
+		if !nearlyEqual(after, want, 1e-9) {
+			t.Errorf("Ellipse cell %s: before=%v after=%v want %v (scale %v)",
+				name, before, after, want, scale)
+		}
+	}
+	checkScaled("X", x0, toFloat(ellipseAfter.Cells["X"].Value()), 2.5)
+	checkScaled("A", a0, toFloat(ellipseAfter.Cells["A"].Value()), 2.5)
+	checkScaled("C", c0, toFloat(ellipseAfter.Cells["C"].Value()), 2.5)
+	checkScaled("Y", y0, toFloat(ellipseAfter.Cells["Y"].Value()), 1.75)
+	checkScaled("B", b0, toFloat(ellipseAfter.Cells["B"].Value()), 1.75)
+	checkScaled("D", d0, toFloat(ellipseAfter.Cells["D"].Value()), 1.75)
+}
+
+func findEllipseRow(t *testing.T, s *Shape) *GeometryRow {
+	t.Helper()
+	for _, g := range s.Geometries {
+		for _, r := range g.Rows {
+			if strings.EqualFold(r.RowType(), "Ellipse") {
+				return r
+			}
+		}
+	}
+	t.Fatalf("shape %q has no Ellipse geometry row", s.ShapeName)
+	return nil
+}
+
+func nearlyEqual(a, b, eps float64) bool {
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return d <= eps
+}

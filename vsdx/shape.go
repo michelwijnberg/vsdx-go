@@ -481,11 +481,15 @@ func absVal(v float64) float64 {
 	return v
 }
 
-// scaleGeometryAxis multiplies the named cell ("X" or "Y") of every
-// absolute-coord row in g by scale. Localizes the geometry first so the
-// mutation lands on instance-owned XML, not on a master that's shared with
-// every sibling instance.
-func scaleGeometryAxis(g *Geometry, cellName string, scale float64) {
+// scaleGeometryAxis multiplies every absolute-coord cell on the given axis
+// ("X" or "Y") of every absolute-coord row in g by scale. For row types
+// with multiple coord cells per axis (Ellipse: X+A+C on X, Y+B+D on Y;
+// EllipticalArcTo: X+A and Y+B; InfiniteLine: X+A and Y+B) all of them
+// scale together. Relative-coord rows are skipped (their fractions already
+// track Width/Height at render time). Localizes the geometry first so the
+// mutation lands on instance-owned XML, not on a master shared with every
+// sibling instance.
+func scaleGeometryAxis(g *Geometry, axis string, scale float64) {
 	if g == nil {
 		return
 	}
@@ -494,17 +498,21 @@ func scaleGeometryAxis(g *Geometry, cellName string, scale float64) {
 		if row.xml == nil || row.xml.Parent() != g.xml {
 			continue
 		}
-		switch strings.ToLower(row.RowType()) {
-		case "relmoveto", "rellineto", "relcubbezto", "relquadbezto", "relellipticalarcto":
-			// already fractional — the renderer multiplies by localW/H.
-			continue
+		xCells, yCells := moveCoordCells(row.RowType())
+		var cellNames []string
+		if axis == "X" {
+			cellNames = xCells
+		} else {
+			cellNames = yCells
 		}
-		cell := row.Cells[cellName]
-		if cell == nil {
-			continue
+		for _, name := range cellNames {
+			cell := row.Cells[name]
+			if cell == nil {
+				continue
+			}
+			newV := toFloat(cell.Value()) * scale
+			cell.SetValue(fmtFloat(newV))
 		}
-		newV := toFloat(cell.Value()) * scale
-		cell.SetValue(fmtFloat(newV))
 	}
 }
 func (s *Shape) SetAngle(v float64)  { s.SetCellValue(CellAngle, fmtFloat(v)) }
