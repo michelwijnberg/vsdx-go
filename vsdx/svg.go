@@ -95,7 +95,7 @@ var visioArrowTypes = map[int]ArrowDef{
 	4:  {Path: "M 0 10 L 10 5 L 0 0 L 0 10 z",                                                              W: 2.000, H: 2.000, RefX: 0, RefY: 5, Filled: true,  Setback: 2.000}, // lend4  filled triangle (med)
 	5:  {Path: "M 0 9.998 L 10 5 L 0.094 0.035 C 1.641 3.178 1.635 6.862 0.077 10 z",                       W: 2.000, H: 2.000, RefX: 0, RefY: 5, Filled: true,  Setback: 1.700}, // lend5  filled swept-back
 	6:  {Path: "M 1.413 9.968 L 10 5 L 1.36 0 C 0 3.147 0 6.852 1.36 10 z",                                 W: 2.329, H: 2.013, RefX: 0, RefY: 5, Filled: true,  Setback: 2.200}, // lend6  filled swept-back (variant)
-	7:  {Path: "M 10 0 C 7.802 3.016 4.256 4.864 0.426 4.993 L 0.426 5.007 C 4.256 5.136 7.802 6.984 10 10", W: 1.843, H: 1.919, RefX: 0, RefY: 5, Filled: false, Setback: 0},     // lend7  S-curve fishtail
+	7:  {Path: "M 0 0 C 2.198 3.016 5.744 4.864 9.574 4.993 L 9.574 5.007 C 5.744 5.136 2.198 6.984 0 10", W: 1.843, H: 1.919, RefX: 0, RefY: 5, Filled: false, Setback: 0},     // lend7  S-curve fishtail (wings at refX, tip forward)
 	// Type 8 has no dedicated lend symbol — Visio maps it to lend5 (filled swept-back)
 	8:  {Path: "M 0 9.998 L 10 5 L 0.094 0.035 C 1.641 3.178 1.635 6.862 0.077 10 z",                       W: 2.000, H: 2.000, RefX: 0, RefY: 5, Filled: true,  Setback: 1.700}, // type 8 = lend5 alias
 	9:  {Path: "M 10 0 L 0 10",                                                                             W: 2.000, H: 2.000, RefX: 5, RefY: 5, Filled: false, Setback: 0},     // lend9  diagonal slash
@@ -145,9 +145,19 @@ var visioArrowTypes = map[int]ArrowDef{
 }
 
 // arrowSizeMultipliers maps Visio arrow size indices (0-6) to scale multipliers.
-// Reverse-engineered from Visio SVG exports: size 2 → scale 1.84, size 4 → scale 2.32.
-// Linear interpolation: scale = 1.84 + 0.24 * (size - 2), normalized to size 2 = 1.0.
-var arrowSizeMultipliers = []float64{0.74, 0.87, 1.0, 1.13, 1.26, 1.39, 1.52}
+// Calibrated against Visio's marker <use scale=...> ratios decoded from the
+// comprehensive corpus (size 2 = medium = 1.0 baseline). Sizes 0-4 are a
+// near-linear ramp; size 5 jumps sharply (Visio's "huge" preset):
+//   0: 1.909 / 2.591 ≈ 0.737
+//   1: 2.136 / 2.591 ≈ 0.824
+//   2: 2.591 / 2.591 = 1.000
+//   3: 3.045 / 2.591 ≈ 1.175
+//   4: 3.500 / 2.591 ≈ 1.351
+//   5: 6.682 / 2.591 ≈ 2.579   ← Visio's big jump for "extra extra large"
+//   6: not in corpus; extrapolated from the size 5 step.
+// Earlier table (0.74, 0.87, 1.0, 1.13, 1.26, 1.39, 1.52) was a linear
+// extension that rendered sizes 5/6 too small by ~50%.
+var arrowSizeMultipliers = []float64{0.74, 0.82, 1.0, 1.18, 1.35, 2.58, 4.0}
 
 // ArrowLengthMult returns the length-to-height aspect ratio (W/H) for a given
 // arrow type. Most arrows are 1.0, longer arrows (12-14) are 1.5, long diamond
@@ -376,13 +386,13 @@ func linePatternToSVG(pattern int, weight float64) string {
 		return fmt.Sprintf("%.2f %.2f 0 %.2f 0 %.2f", dash, gap, gap, gap)
 	case 6: // Dash-Dash-Dot
 		return fmt.Sprintf("%.2f %.2f %.2f %.2f 0 %.2f", dash, gap, dash, gap, gap)
-	case 7: // Long Dash
-		return fmt.Sprintf("%.2f %.2f", weight*10, gap)
-	case 8: // Long Dash-Short Dash
-		return fmt.Sprintf("%.2f %.2f %.2f %.2f", weight*10, gap, dash, gap)
-	case 9: // Long Dash-Short Dash-Short Dash
+	case 7: // Long Dash-Short Dash (Visio empirical: 19w gap 7w gap)
+		return fmt.Sprintf("%.2f %.2f %.2f %.2f", weight*19, gap, dash, gap)
+	case 8: // Long Dash-Short Dash-Short Dash (Visio empirical: 19w gap 7w gap 7w gap)
 		return fmt.Sprintf("%.2f %.2f %.2f %.2f %.2f %.2f",
-			weight*10, gap, dash, gap, dash, gap)
+			weight*19, gap, dash, gap, dash, gap)
+	case 9: // Dense even dots (Visio empirical: 3w 3w)
+		return fmt.Sprintf("%.2f %.2f", weight*3, weight*3)
 	case 10: // Sparse Dot
 		return fmt.Sprintf("0 %.2f", sparseGap)
 	case 11: // Dense Dot

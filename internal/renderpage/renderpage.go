@@ -65,6 +65,17 @@ func Render(page *vsdx.Page, pageW, pageH float64) (string, error) {
 		} else {
 			y = viewH - (shape.Y()+(shape.Height()-shape.LocY()))*ppi
 		}
+		// Zero-height shapes (horizontal connectors with BeginY==EndY) get
+		// clamped to a phantom 1-inch tall rendering box, and the master
+		// geometry's Y=0 row lands at SVG Y=pixelH (= bottom of the phantom
+		// box). The outer translate above placed us at the shape's pin Y,
+		// so the line ends up rendered one full pixelH below the pin.
+		// Shift the outer up by pixelH so the rendered line lands at the
+		// shape's actual pin Y, matching Visio's output (where the line
+		// shows at world Y = shape.Y() * ppi).
+		if shape.Height() == 0 {
+			y -= pixelH
+		}
 
 		// FlipX/FlipY mirror the shape's GEOMETRY within its local frame
 		// (MS-VSDX §2.2.3.2.1 steps 3-4). Crucially, text content is NOT
