@@ -124,7 +124,7 @@
 	</defs>
 	<g v:mID="2" v:index="2" v:groupContext="foregroundPage">
 		<title>Fills</title>
-		<v:pageProperties v:drawingScale="0.0393701" v:pageScale="0.0393701" v:drawingUnits="24" v:shadowOffsetX="8.50394"
+		<v:pageProperties v:drawingScale="1" v:pageScale="1" v:drawingUnits="0" v:shadowOffsetX="8.50394"
 				v:shadowOffsetY="-8.50394"/>
 		<g id="shape1-1" v:mID="1" v:groupContext="shape" transform="translate(46.8,-523.8)">
 			<title>Sheet.1</title>

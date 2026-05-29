@@ -30,7 +30,7 @@
 
 	<g v:mID="7" v:index="7" v:groupContext="foregroundPage">
 		<title>Effects</title>
-		<v:pageProperties v:drawingScale="0.0393701" v:pageScale="0.0393701" v:drawingUnits="24" v:shadowOffsetX="8.50394"
+		<v:pageProperties v:drawingScale="1" v:pageScale="1" v:drawingUnits="0" v:shadowOffsetX="8.50394"
 				v:shadowOffsetY="-8.50394"/>
 		<g id="shape1-1" v:mID="1" v:groupContext="shape" transform="translate(48.6,-480.96)">
 			<title>Sheet.1</title>
