@@ -45,7 +45,8 @@ type EffectiveStyle struct {
 	// Text properties
 	TextColor     string  // Text color
 	FontSize          float64 // Font size in points
-	FontID            int     // Font table index
+	FontID            int     // Font table index (when Char.Font is numeric)
+	FontName          string  // Font name (when Char.Font is set to a literal name)
 	Bold              bool
 	Italic            bool
 	Underline         bool
@@ -312,9 +313,18 @@ func (es *EffectiveStyle) resolveTextProperties(s *Shape) {
 		es.FontSize = size * 72.0 // inches to points
 	}
 
-	// Font ID from Character section
+	// Font from Character section. The cell can hold either an integer
+	// index into the document's font table (Visio's canonical form) or a
+	// literal font name (what vsdx-go's SetCharFont writes — Visio
+	// normalises that to an index on resave). Keep both: numeric value as
+	// FontID, string value as FontName.
 	if font := s.CellValue("Char.Font"); font != "" {
 		es.FontID = int(toFloat(font))
+		// toFloat returns 0 for non-numeric strings, so treat that as a
+		// signal that the cell holds a name rather than an index.
+		if font != "0" && es.FontID == 0 {
+			es.FontName = font
+		}
 	}
 
 	// Style (bold/italic/underline/smallcaps from Style cell bitmask)

@@ -180,6 +180,29 @@ func newShape(xml *etree.Element, parent ShapeParent, page *Page) *Shape {
 		}
 	}
 
+	// Character / Paragraph sections: expose cells under the dotted
+	// "Char.<N>" / "Para.<N>" keys that EffectiveStyle uses to drive font,
+	// size, bold/italic, color and alignment. Without this the entire
+	// formatting layer was invisible to the renderer — SetCharBold(true)
+	// wrote Section/Row/Cell correctly but CellValue("Char.Style") returned
+	// empty so EffectiveStyle.Bold stayed false.
+	if charSection := xml.FindElement("Section[@N='Character']"); charSection != nil {
+		if row := charSection.FindElement("Row"); row != nil {
+			for _, cellElem := range row.SelectElements("Cell") {
+				cell := newCell(cellElem, s)
+				s.Cells["Char."+cell.Name()] = cell
+			}
+		}
+	}
+	if paraSection := xml.FindElement("Section[@N='Paragraph']"); paraSection != nil {
+		if row := paraSection.FindElement("Row"); row != nil {
+			for _, cellElem := range row.SelectElements("Cell") {
+				cell := newCell(cellElem, s)
+				s.Cells["Para."+cell.Name()] = cell
+			}
+		}
+	}
+
 	return s
 }
 
@@ -676,6 +699,11 @@ func (s *Shape) SetCharBold(bold bool) {
 // SetCharItalic sets or clears italic formatting on the shape's text.
 func (s *Shape) SetCharItalic(italic bool) {
 	s.setCharStyleBit(2, italic)
+}
+
+// SetCharUnderline sets or clears underline formatting on the shape's text.
+func (s *Shape) SetCharUnderline(underline bool) {
+	s.setCharStyleBit(4, underline)
 }
 
 // setCharStyleBit sets or clears a bit in the Character Style cell.

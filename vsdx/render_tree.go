@@ -524,10 +524,15 @@ func (b *RenderTreeBuilder) resolveText(shape *Shape, style *EffectiveStyle, tra
 		textColor = "#000000"
 	}
 
+	// Font family: only emit one when the shape explicitly carries a Char.Font
+	// name. Visio's SVG export always names Calibri (its default), but on
+	// Linux/headless rasterisers without Calibri installed the explicit name
+	// forces a worse fallback than leaving font-family unset. Real Windows
+	// users with Calibri see the correct font either way.
 	text := &ResolvedText{
 		Content:    shape.Text(),
 		FontSize:   fontSizeSVG,
-		FontFamily: "", // Use default font for better cross-platform rendering
+		FontFamily: style.FontName,
 		FontWeight: "normal",
 		FontStyle:  "normal",
 		Fill:       textColor,
