@@ -22,3 +22,24 @@ Thumbs.db
 # Generated SVG files (keep original .vsdx and Visio-exported .svg)
 vsdx-svg/*-generated.svg
 vsdx-svg/*-generated/
+
+# Compiled cmd binaries (Go puts them in repo root when run as `go build ./cmd/...`)
+/batch-fixture-gen
+/mutation-corpus-gen
+/render
+/render-audit
+/render-compare
+/svg-compare
+/stencil-diag
+/text-compare
+/arrow-inspect
+/vsdx-test
+
+# Render-comparison output (generated; goldens live alongside their sources)
+/render-compare-output/
+/render-compare-output-mutations/
+/render-compare-output-visio/
+/render-compare-output-batch/
+
+# Per-recipe vsdx-go re-render helper, not the committed baseline golden
+vsdx-svg-mutations/*-vsdxgo.svg
