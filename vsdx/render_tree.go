@@ -681,9 +681,13 @@ func (b *RenderTreeBuilder) resolveText(shape *Shape, style *EffectiveStyle, tra
 		}
 	}
 
-	// Calculate available width for text wrapping
+	// Calculate available width for text wrapping. The 0.42 ratio matches
+	// Calibri's average glyph width (Visio's default font); the earlier
+	// 0.45 estimate over-counted, causing premature wraps that Visio
+	// didn't perform on long-but-still-fitting labels like
+	// "effect-shadow-default".
 	availableWidth := (shapeW - leftMargin - rightMargin) * ((b.scaleX + b.scaleY) / 2)
-	charWidth := fontSizeSVG * 0.45 // approximate character width
+	charWidth := fontSizeSVG * 0.42 // approximate character width
 
 	// Visio uses alphabetic baseline positioning with additional line-height padding.
 	// For top-aligned text, add offset to match Visio's text leading.
@@ -759,6 +763,9 @@ func (b *RenderTreeBuilder) resolveText(shape *Shape, style *EffectiveStyle, tra
 }
 
 // wrapTextLines splits text into lines that fit within the given width.
+// Whitespace AND hyphens act as soft break points (the hyphen stays on the
+// trailing fragment of its line). Matches Visio's UI behaviour for long
+// hyphenated labels like "transform-no-flip-reference".
 func wrapTextLines(text string, maxWidth, charWidth float64) []string {
 	if maxWidth <= 0 || charWidth <= 0 {
 		return []string{text}
@@ -768,7 +775,7 @@ func wrapTextLines(text string, maxWidth, charWidth float64) []string {
 	var result []string
 
 	for _, inputLine := range inputLines {
-		words := strings.Fields(inputLine)
+		words := splitWordsForWrap(inputLine)
 		if len(words) == 0 {
 			result = append(result, "")
 			continue
@@ -777,6 +784,22 @@ func wrapTextLines(text string, maxWidth, charWidth float64) []string {
 		var currentLine strings.Builder
 		currentWidth := 0.0
 		spaceWidth := charWidth * 0.6 // spaces are narrower than average chars
+
+		// Tokens that came from hyphen-splitting end with '-'; they should
+		// concatenate to the next token without an intervening space.
+		prevEndedHyphen := false
+
+		joinWidth := func() float64 {
+			if prevEndedHyphen {
+				return 0
+			}
+			return spaceWidth
+		}
+		writeJoin := func() {
+			if !prevEndedHyphen {
+				currentLine.WriteString(" ")
+			}
+		}
 
 		for i, word := range words {
 			wordWidth := float64(len(word)) * charWidth
@@ -787,20 +810,18 @@ func wrapTextLines(text string, maxWidth, charWidth float64) []string {
 			if i == 0 {
 				currentLine.WriteString(word)
 				currentWidth = wordWidth
-			} else if currentWidth+spaceWidth+wordWidth <= maxWidth && !keepWithNext {
-				currentLine.WriteString(" ")
+			} else if currentWidth+joinWidth()+wordWidth <= maxWidth && !keepWithNext {
+				writeJoin()
 				currentLine.WriteString(word)
-				currentWidth += spaceWidth + wordWidth
-			} else if keepWithNext && currentWidth+spaceWidth+wordWidth <= maxWidth {
+				currentWidth += joinWidth() + wordWidth
+			} else if keepWithNext && currentWidth+joinWidth()+wordWidth <= maxWidth {
 				// Short word fits, but check if it + next word would also fit
 				nextWordWidth := float64(len(words[i+1])) * charWidth
-				if currentWidth+spaceWidth+wordWidth+spaceWidth+nextWordWidth <= maxWidth {
-					// Both fit, add this word
-					currentLine.WriteString(" ")
+				if currentWidth+joinWidth()+wordWidth+spaceWidth+nextWordWidth <= maxWidth {
+					writeJoin()
 					currentLine.WriteString(word)
-					currentWidth += spaceWidth + wordWidth
+					currentWidth += joinWidth() + wordWidth
 				} else {
-					// Won't fit with next word, break now to keep short word with next
 					result = append(result, currentLine.String())
 					currentLine.Reset()
 					currentLine.WriteString(word)
@@ -812,6 +833,8 @@ func wrapTextLines(text string, maxWidth, charWidth float64) []string {
 				currentLine.WriteString(word)
 				currentWidth = wordWidth
 			}
+
+			prevEndedHyphen = len(word) > 0 && word[len(word)-1] == '-'
 		}
 
 		if currentLine.Len() > 0 {
@@ -820,6 +843,35 @@ func wrapTextLines(text string, maxWidth, charWidth float64) []string {
 	}
 
 	return result
+}
+
+// splitWordsForWrap tokenises an input line for the wrapping algorithm.
+// Whitespace is consumed (acts as a hard separator), hyphens are kept
+// attached to the preceding fragment so they trail the line on a wrap.
+// E.g. "transform-no-flip-reference" → ["transform-", "no-", "flip-",
+// "reference"]; "hello world-test" → ["hello", "world-", "test"].
+func splitWordsForWrap(line string) []string {
+	var out []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, r := range line {
+		switch {
+		case r == ' ' || r == '\t':
+			flush()
+		case r == '-':
+			cur.WriteRune(r)
+			flush()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	flush()
+	return out
 }
 
 // InspectRenderTree returns a debug representation of the render tree.
