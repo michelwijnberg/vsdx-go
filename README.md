@@ -7,7 +7,7 @@ This is a Go port of the Python [vsdx](https://github.com/dave-howard/vsdx) libr
 ## Installation
 
 ```bash
-go get github.com/MichelW6667/vsdx-go/vsdx
+go get wijnberg.net/vsdx-go/vsdx
 ```
 
 Requires Go 1.21 or later.
@@ -21,7 +21,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/MichelW6667/vsdx-go/vsdx"
+    "wijnberg.net/vsdx-go/vsdx"
 )
 
 func main() {
@@ -76,7 +76,9 @@ vsdx-go/
 │   ├── transform.go            # Transform: 2D affine transformations and matrix operations
 │   ├── effective_style.go      # EffectiveStyle: computed style with theme/master inheritance
 │   ├── gradient.go             # Gradient: fill gradients for shapes
-│   ├── shadow.go               # Shadow: drop shadow effects
+│   ├── fillpattern.go          # 8×8 bitmap fill patterns 2-9 + 25-26
+│   ├── shadow.go               # Shadow: drop shadow effects (feDropShadow filter)
+│   ├── render_validate.go      # RenderValidator: transforms, connectors, z-order checks
 │   │
 │   │── # Features
 │   ├── foreign.go              # AddImage, AddShape, GroupShapes, SetForeignData
@@ -93,19 +95,36 @@ vsdx-go/
 │   ├── theme.go                # Theme: document themes, effects, variants, QuickStyle
 │   ├── styles.go               # StyleSheet: style inheritance and application
 │   │
+│   │── # Comments & Data Links
+│   ├── comments.go             # Comments: document/shape comments + authors
+│   ├── linegradient.go         # LineGradient: stroke gradients + Reviewer / Annotation
+│   ├── datalink.go             # DataLink: DataConnections, DataRecordSets
+│   │
 │   │── # Support
 │   ├── cellname.go             # CellName constants: 70+ cell definitions
+│   ├── compat.go               # Markup Compatibility (mc:AlternateContent)
 │   ├── errors.go               # Sentinel errors: ErrInvalidFileType, FileError
 │   ├── types.go                # Result structs: Point, Rect
 │   ├── namespace.go            # XML namespace constants
+│   ├── media.go                # Embedded template shapes for connectors
 │   │
-│   └── *_test.go               # 490 test cases
+│   └── *_test.go               # 30 test files (400 funcs, 609 with subtests)
 │
 ├── cmd/render-compare/         # Compare library SVG with Visio golden exports
 ├── cmd/render-audit/           # Validate transforms, connectors, z-order, arrows
 ├── cmd/text-compare/           # Compare text positions between SVGs
+├── cmd/stencil-diag/           # Diagnostic tool for stencil files
+├── cmd/comprehensive-gen/      # Generate 9-theme comprehensive-features.vsdx
+├── cmd/comprehensive-compare/  # Per-theme render comparison vs Visio resave
+├── cmd/batch-fixture-gen/      # Generate per-theme mutation fixtures
+├── cmd/mutation-corpus-gen/    # Build mutation-render corpus
+├── cmd/probe-conn/             # Connector geometry diagnostics
+├── svg-compare/cmd/            # 10 reverse-engineering CLIs (shape-inspect, ...)
+├── internal/renderpage/        # Page-level SVG assembler (shared by render tools)
 ├── testdata/golden/            # Golden test fixtures for SVG rendering
-└── tests/                      # Test fixture .vsdx files (15+ files)
+├── tests/                      # Test fixture .vsdx files (20+ files)
+├── vsdx-svg/                   # Visio golden SVG corpus for SSIM benchmarks
+└── docs/MS-VSDX.pdf            # Microsoft VSDX format specification (468 pages)
 ```
 
 ### Key data flow
@@ -396,9 +415,14 @@ XML parsing uses [github.com/beevik/etree](https://github.com/beevik/etree) for 
 
 ```bash
 go test ./vsdx/... -v
+go test ./vsdx/... -cover -count=1   # coverage report
 ```
 
-490 test cases across 10 test files, ~90% code coverage. Test fixtures are `.vsdx` files in `tests/` and golden SVGs in `testdata/golden/`.
+400 top-level test functions (609 including subtests) across 30 test files,
+~59.5% code coverage. Test fixtures are `.vsdx` files in `tests/` and golden
+SVGs in `testdata/golden/`. The audit-level corpus lives in `vsdx-svg/`
+(Visio gouden exports) and `vsdx-svg/comprehensive/` (vsdx-go gegenereerde
+9-thema test-VSDX + Visio resave baseline).
 
 ## SVG Rendering
 
@@ -414,13 +438,31 @@ svg := page.ToSVG(&vsdx.SVGOptions{
 
 Rendering features:
 - **Geometry**: rectangles, ellipses, arcs, NURBS curves (converted to Bezier)
-- **Connectors**: proper B-spline to Bezier conversion, arrow setbacks
+- **Connectors**: proper B-spline to Bezier conversion, arrow setbacks in points
 - **Arrows**: 45+ marker types with correct sizing (markerUnits="strokeWidth")
 - **Line styles**: 24 dash patterns, line caps, rounded corners
-- **Fill styles**: solid, gradients, transparency
-- **Text**: positioned text blocks with character formatting
-- **Transforms**: rotation, scaling, hierarchical transform propagation
+- **Fill styles**: solid, gradients (linear + radial), transparency, 8×8 bitmap hatches (patterns 2-9 + 25-26)
+- **Effects**: drop shadow (feDropShadow), soft edges (feGaussianBlur)
+- **Text**: positioned text blocks with character formatting, hyphen-aware wrap, vertical text, FlipX/Y with text upright
+- **Transforms**: rotation, scaling, FlipX/FlipY, hierarchical transform propagation
 - **Groups**: nested shape groups with correct coordinate transforms
+
+Average SSIM against Visio's own SVG exports: 0.987 over the bundled
+gouden corpus, 0.959 over the 9-theme comprehensive feature corpus.
+See `vsdx/UNSUPPORTED_FEATURES.md` for the Model / API / Render support
+matrix.
+
+## Writer Canonical Form
+
+`SaveVsdxBytes` applies several canonical-form normalisations on save so
+the output matches what Visio's "Save As" would produce: vt: namespace
+on extended-properties typed elements, HLinks vector auto-generation,
+document color palette + FaceName auto-refresh, per-page RecalcColor
+triggers, windows.xml children strip, cp/pp text format markers, and
+default-value stripping for cells that Visio's resave would strip.
+
+22 out of 24 ZIP-files match Visio's resave tag-count exactly; see
+`vsdx/WRITER_AUDIT.md` for the full list of canonical-form items.
 
 ## Credits
 

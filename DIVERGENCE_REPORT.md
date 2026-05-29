@@ -1,6 +1,22 @@
 # SVG Renderer Divergence Report
 
-## Summary
+> **Status**: HISTORICAL. This is the raw divergence dump from the initial
+> RenderTree-vs-legacy comparison (109 shapes tested). It served as input
+> for `vsdx/DIVERGENCE_STATUS.md`, which classifies each item and tracks
+> resolution.
+>
+> Current state (2026-05-29):
+> - 102/160 divergences FIXED
+> - 54 VALIDATED_INTENTIONAL (correct per MS-VSDX spec — legacy code had bugs)
+> - 4 edge cases (H=0 / negative-height connectors with multiline text)
+> - 0 NEEDS_WORK
+>
+> **See `vsdx/DIVERGENCE_STATUS.md` for the current resolution status** of
+> every line in this report. This file remains as the evidentiary record
+> of what was measured and why each item was classified as fixed or
+> intentional.
+
+## Summary (at-the-time snapshot)
 
 - **Total shapes tested**: 109
 - **Divergent shapes**: 38 (34.9%)

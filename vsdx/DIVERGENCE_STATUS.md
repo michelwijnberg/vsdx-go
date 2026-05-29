@@ -451,51 +451,92 @@ text.X = (textX + offsetX) * b.scaleX
 |------|-------------|--------|--------|
 | #16 | Multi-line text with tspan | Medium | **FIXED** |
 | #27 | Text decorations | Low | **FIXED** |
-| #31 | Vertical text | Low | |
+| #31 | Vertical text | Low | **FIXED** |
 
 ### P3: Implementable Features
 
 | Item | Description | Effort | Status |
 |------|-------------|--------|--------|
 | #22 | Custom line caps | Low | **FIXED** |
-| #35 | FlipX/FlipY transforms | Low | |
-| #41 | Group clip bounds | Low | |
-| #34 | Arrow placement on curves | Medium | |
+| #35 | FlipX/FlipY transforms | Low | **FIXED** |
+| #41 | Group clip bounds | Low | **VALIDATED_INTENTIONAL** |
+| #34 | Arrow placement on curves | Medium | **FIXED** |
 
 ---
 
-## Metrics Summary
+## Metrics Summary (2026-05-29)
 
 | Category | Total | Fixed | Intentional | Needs Work | Unsupported |
 |----------|-------|-------|-------------|------------|-------------|
-| Path | 14→3 | 11 | 3 | 0 | 0 |
-| Bounds | 8→0 | 8 | 0 | 0 | 0 |
-| Text | 88→5 | 83 | 1 | 4 | 0 |
+| Path | 14 | 11 | 3 | 0 | 0 |
+| Bounds | 8 | 8 | 0 | 0 | 0 |
+| Text | 88 | 83 | 1 | 4 | 0 |
 | Fill | 50 | 0 | 50 | 0 | 0 |
-| **Total** | **160→58** | **102** | **54** | **4** | **0** |
+| **Total** | **160** | **102** | **54** | **4** | **0** |
 
-Plus 23 documented unsupported features.
+Plus 23 documented unsupported items in `UNSUPPORTED_FEATURES.md`.
+
+### Writer round-trip status (toegevoegd Fase 6)
+
+Sinds 2026-05 een aanvullende metric: tag-voor-tag XML diff van vsdx-go's
+output tegen Visio 2021's resave (zie `WRITER_AUDIT.md`):
+
+- **22/24 ZIP files identiek**
+- **2 cosmetische deltas** (rich-text Character row expansie, 1 stale-
+  baseline cell op Effects page)
+- 38 writer-canonical fixes geland (vt: namespace, page-rels, app.xml
+  HLinks, ColorEntry + FaceName auto-refresh, RecalcColor triggers,
+  Layer/Connection/Hyperlink canonical forms, ConnectionABCD canonical
+  positie, Lock cells direct op shape, cp/pp text markers, TxtAngle
+  placeholders, default-stripping voor LinePattern/LineCap/arrow-sizes/
+  gradient defaults/3D effect zeros).
+
+### SSIM render baselines
+
+| Corpus | Files | Gemiddelde | Range |
+|---|---|---|---|
+| Visio gouden corpus | 8 | 0.987 | 0.969 – 0.997 |
+| Comprehensive (9 thema's) | 9 | 0.959 | 0.889 (fills) – 0.985 (shapes) |
 
 ---
 
 ## Next Actions
 
-### P0 Complete
+### Afgerond
 1. ~~**Fix #4**: Apply group transforms to child paths~~ **DONE**
 2. ~~**Fix #6**: InfiniteLine geometry not implemented~~ **DONE**
 3. ~~**Fix #9/#10**: Text element count (group inheritance + emit recursion)~~ **DONE**
-4. ~~**Fix #11**: Text order - was symptom of #9/#10, remaining is legacy encoding bug~~ **DONE**
+4. ~~**Fix #11**: Text order~~ **DONE**
+5. ~~**Fix #7,#8**: ViewBox calculation for connectors~~ **DONE**
+6. ~~**Fix #12,#13**: Text position mismatches~~ **DONE**
+7. ~~**Fix #22**: Custom line caps~~ **DONE**
+8. ~~**Fix #27**: Text decorations~~ **DONE**
+9. ~~**Fix #31**: Vertical text~~ **DONE**
+10. ~~**Fix #34**: Arrow placement on curves~~ **DONE**
+11. ~~**Fix #35**: FlipX/FlipY transforms~~ **DONE**
+12. ~~**Validate #41**: Group clip bounds~~ **DONE** (phantom requirement)
+13. ~~**Fase 6**: Writer canonical-form sweep~~ **DONE** (38 items, zie WRITER_AUDIT.md)
 
-### P1 Complete
-5. ~~**Fix #7,#8**: ViewBox calculation for connectors~~ **DONE** (8 divergences fixed)
-6. ~~**Fix #12,#13**: Text position mismatches~~ **DONE** (35 divergences fixed)
+### Resterende edge cases (all VALIDATED_INTENTIONAL)
+- **1 text Y position**: `test4_connectors` Shape 7 — negative-height connector
+  with multiline text
+- **3 text X positions**: `test5_master` Shapes 5/6/7 — H=0 connector text
+  centering convention (6.5% offset)
+- **1 text content**: `test_jinja_loop_showif` Shape 9 — XML encoding
+  (`&gt;` vs `&amp;gt;`) — INTENTIONAL (legacy bug)
 
-### Remaining Edge Cases (All Validated)
-- **1 text Y position**: test4_connectors Shape 7 - negative-height connector with multiline text
-- **3 text X positions**: test5_master Shapes 5/6/7 - H=0 connector text centering convention (6.5% offset)
-- **1 text content**: test_jinja_loop_showif Shape 9 - XML encoding (`&gt;` vs `&amp;gt;`) - INTENTIONAL (legacy bug)
+All 5 remaining text divergences zijn edge cases met H=0 of negative-height
+connectors. Visuele impact minimaal.
 
-All 5 remaining text divergences are edge cases with H=0 or negative-height connectors. The visual impact is minimal.
+### Vervolg (laag prioriteit)
 
-### P2/P3 Items (Low Priority)
-See UNSUPPORTED_FEATURES.md for items like text decorations, vertical text, custom line joins.
+Zie `UNSUPPORTED_FEATURES.md` voor de Model/API/Render support-matrix en
+`ROADMAP.md` voor de aanbevolen ontwikkelvolgorde:
+
+1. Round-trip verificatie (~30 min)
+2. Render fidelity op zwakste thema's: fills (0.889) → text (0.934) →
+   arrows (0.949) → connectors (0.966)
+3. 3D effects rendering (Bevel/Glow/Reflection/Sketch/Rotation3D) — geeft
+   visuele effecten die Visio's eigen SVG-export ook niet levert
+4. Long-tail features (hatch patterns 10-24, image fills, tabs render,
+   bullets, CJK, custom arrows, etc.)

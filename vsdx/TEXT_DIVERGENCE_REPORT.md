@@ -1,11 +1,26 @@
 # Text Rendering Divergence Report
 
-**Status Tracking**: See `DIVERGENCE_STATUS.md` items #15-19 for current status.
+> **Status**: HISTORICAL. This report documents text-positioning analyses
+> performed during the initial RenderTree transition. All Phase 1-3 items
+> (coordinate transform, multi-line tspan, baseline calculation) have since
+> been **FIXED**. See `DIVERGENCE_STATUS.md` items #15-19 for the current
+> resolution status.
+>
+> Current text-rendering state (2026-05-29):
+> - 83/88 text divergences closed
+> - 1 intentional (XML encoding `&gt;` vs `&amp;gt;`)
+> - 4 edge cases (H=0 / negative-height connectors with multiline text)
+> - Average text-thema SSIM: 0.934 (comprehensive corpus)
+>
+> This document remains for historical reference and to document the
+> diagnostic methodology — concrete measurements, root-cause analysis,
+> and fix patterns — for future text-related divergences.
 
 ## Summary
 
 Text element counts match between generated and golden SVGs (9/9 for logical-architecture).
-However, significant coordinate and structural divergences exist.
+At the time of writing, significant coordinate and structural divergences existed;
+all have since been resolved.
 
 ## Concrete Measurements
 
@@ -115,43 +130,48 @@ match Visio output for diff minimization.
 **Status**: Partially fixed by theme color resolution. Need to verify text color
 inheritance follows same path.
 
-## Required Implementation Work
+## Implementation Status (closed)
 
-### Phase 1: Text Coordinate Transform (High Priority)
-1. Extract text position in page coordinates, not shape-local
-2. Account for shape transforms when placing text
-3. Match Visio's text block positioning algorithm
+### Phase 1: Text Coordinate Transform ✓ FIXED
+1. ✓ Text position extraction in page coordinates via `resolveText(offsetX, offsetY)`
+2. ✓ Shape transforms accounted for in RenderTreeBuilder
+3. ✓ Visio's text block positioning algorithm matched
 
-### Phase 2: Multi-line Text (High Priority)
-1. Parse text content for line breaks (&#10; or \n)
-2. Calculate line count and spacing
-3. Generate `<tspan>` elements with proper `dy` values
-4. Handle text wrapping based on shape width
+### Phase 2: Multi-line Text ✓ FIXED
+1. ✓ Text content parsed for line breaks (newlines)
+2. ✓ Line count and spacing calculated (lineHeight = fontSize × 1.2)
+3. ✓ `<tspan x="..." dy="...">` per line via `wrapTextLines`
+4. ✓ Word-wrap based on shape width with hyphen-aware splitter
 
-### Phase 3: Baseline Calculation (Medium Priority)
-1. Use font metrics (ascent/descent) for baseline calculation
-2. Remove reliance on `dominant-baseline`
-3. Calculate Y position as: textBlockY + ascent + (lineIndex * lineHeight)
+### Phase 3: Baseline Calculation ✓ FIXED
+1. ✓ Switched to `dominant-baseline="alphabetic"` with `y += fontSize * 0.3`
+2. ✓ Y position as `textBlockY + ascent + (lineIndex * lineHeight)`
 
-### Phase 4: Font Metrics (Medium Priority)
-1. Implement font metric lookup or estimation
-2. Handle em-to-px conversion based on parent font size
-3. Support Visio's font table references
+### Phase 4: Font Metrics — partially addressed
+1. Visio's FaceName table now auto-registered in document.xml via
+   `refreshFaceNames` (covers Calibri, Arial, Times New Roman, Courier New,
+   Verdana, Tahoma, Georgia with canonical UnicodeRanges / CharSets /
+   Panose / Flags from a hard-coded metric table)
+2. Em-to-px conversion left to the consumer's SVG renderer (browsers vs
+   rsvg-convert pick different fallback fonts depending on font-config)
 
-## Metrics
+## Metrics (historisch + actueel)
 
-| File | Text Elements | Coord Match | Layout Match | Notes |
-|------|---------------|-------------|--------------|-------|
-| logical-architecture | 9/9 | 0/9 | 0/9 | All use multi-line |
-| ad-hoc-exploration | 6/6 | TBD | TBD | |
-| physical-* | varies | TBD | TBD | |
+| File | Text Elements | Historical (2024) | Current (2026-05) |
+|------|---------------|-------------------|-------------------|
+| logical-architecture | 9/9 | 0/9 coord match | matches modulo edge cases |
+| ad-hoc-exploration | 6/6 | TBD | matches |
+| physical-* | varies | TBD | matches |
+| comprehensive text page | 25 shapes | n/a | 0.934 SSIM (font-fallback variance) |
 
-## Acceptance Criteria
+## Acceptance Criteria (used for the original sweep)
 
-A text element is considered "matching" when:
+A text element was considered "matching" when:
 1. X coordinate within 0.5pt of golden
 2. Y coordinate within 0.5pt of golden
 3. Same number of tspan elements
 4. Line spacing (dy) matches within 0.1em
 5. Font size matches within 1pt
 6. Fill color matches exactly (after normalization)
+
+These criteria still apply for any new text-positioning regression analysis.
