@@ -4,12 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"html"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"wijnberg.net/vsdx-go/internal/renderpage"
 	"wijnberg.net/vsdx-go/vsdx"
 )
 
@@ -128,8 +128,8 @@ func processFile(name, vsdxPath, svgPath string) CompareResult {
 		pageH = 600
 	}
 
-	// Render with RenderTree renderer
-	newSVG, newErr := renderPageNew(page, pageW, pageH)
+	// Render with RenderTree renderer (shared with cmd/mutation-corpus-gen).
+	newSVG, newErr := renderpage.Render(page, pageW, pageH)
 	if newErr != nil {
 		result.NewErr = newErr.Error()
 	} else {
@@ -137,174 +137,6 @@ func processFile(name, vsdxPath, svgPath string) CompareResult {
 	}
 
 	return result
-}
-
-func renderPageNew(page *vsdx.Page, pageW, pageH float64) (string, error) {
-	var sb strings.Builder
-
-	// Use 72 pixels per inch for scaling
-	ppi := 72.0
-	viewW := pageW * ppi
-	viewH := pageH * ppi
-
-	sb.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%.4fin" height="%.4fin" viewBox="0 0 %.2f %.2f">`, pageW, pageH, viewW, viewH))
-	sb.WriteString("\n")
-
-	for _, shape := range page.ChildShapes() {
-		shapeW := shape.Width()
-		shapeH := shape.Height()
-		shapeAngle := shape.Angle()
-
-		// Check if this is a rotated 1D shape (like a divider line or connector)
-		// These have Height=0 and non-zero Angle, and use BeginX/BeginY for positioning
-		isRotated1D := shapeH == 0 && shapeAngle != 0
-
-		if isRotated1D {
-			// For rotated 1D shapes, draw the line directly using BeginX/BeginY/EndX/EndY
-			// This avoids complex rotation transforms
-			x1 := shape.BeginX() * ppi
-			y1 := (pageH - shape.BeginY()) * ppi
-			x2 := shape.EndX() * ppi
-			y2 := (pageH - shape.EndY()) * ppi
-
-			// Get line color from effective style
-			style := shape.ComputeEffectiveStyle()
-			lineColor := style.EffectiveLineColor()
-			if lineColor == "" {
-				lineColor = "#000000"
-			}
-
-			// Get line style from effective style (already computed above)
-			linePattern := style.LinePattern
-			strokeWidth := style.LineWeight // already in points
-
-			// Generate dash array for line pattern
-			dashArray := ""
-			if linePattern == 4 { // Dash-Dot
-				dashArray = fmt.Sprintf(`stroke-dasharray="%.2f %.2f %.2f %.2f"`,
-					strokeWidth*7, strokeWidth*5, 0.0, strokeWidth*5)
-			}
-
-			// Check for arrow markers from effective style
-			endArrow := style.EndArrow
-			beginArrow := style.BeginArrow
-			hasEndArrow := endArrow > 0
-			hasBeginArrow := beginArrow > 0
-
-			if hasEndArrow || hasBeginArrow {
-				// Calculate marker size based on arrow size and stroke width
-				// Same formula as render_tree.go createMarkerDef
-				arrowSizeMultipliers := []float64{0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0}
-				sizeMult := 1.0
-				if style.EndArrowSize >= 0 && style.EndArrowSize < len(arrowSizeMultipliers) {
-					sizeMult = arrowSizeMultipliers[style.EndArrowSize]
-				}
-				baseScale := 0.36 * sizeMult
-				minVisualWidth := 7.0 * sizeMult
-				baseVisualWidth := 10 * baseScale * strokeWidth
-				var markerSize float64
-				if baseVisualWidth >= minVisualWidth {
-					markerSize = 10 * baseScale
-				} else {
-					markerSize = minVisualWidth / strokeWidth
-				}
-
-				// Use path with markers for connectors with arrows
-				markerID := fmt.Sprintf("arrow_%s_%s", strings.ReplaceAll(lineColor, "#", ""), shape.ID)
-
-				// Build marker defs
-				sb.WriteString("<defs>\n")
-				if hasEndArrow {
-					sb.WriteString(fmt.Sprintf(`  <marker id="%s_end" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="%.2f" markerHeight="%.2f" markerUnits="strokeWidth" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="%s" stroke="none"/></marker>`,
-						markerID, markerSize, markerSize, lineColor))
-					sb.WriteString("\n")
-				}
-				if hasBeginArrow {
-					sb.WriteString(fmt.Sprintf(`  <marker id="%s_start" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="%.2f" markerHeight="%.2f" markerUnits="strokeWidth" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="%s" stroke="none"/></marker>`,
-						markerID, markerSize, markerSize, lineColor))
-					sb.WriteString("\n")
-				}
-				sb.WriteString("</defs>\n")
-
-				// Build marker-end/start attributes
-				markerAttrs := ""
-				if hasBeginArrow {
-					markerAttrs += fmt.Sprintf(` marker-start="url(#%s_start)"`, markerID)
-				}
-				if hasEndArrow {
-					markerAttrs += fmt.Sprintf(` marker-end="url(#%s_end)"`, markerID)
-				}
-
-				sb.WriteString(fmt.Sprintf(`<path d="M%.2f %.2fL%.2f %.2f" fill="none" stroke="%s" stroke-width="%.2f" %s stroke-linecap="round"%s/>`,
-					x1, y1, x2, y2, lineColor, strokeWidth, dashArray, markerAttrs))
-			} else {
-				// Simple line without arrows
-				sb.WriteString(fmt.Sprintf(`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="%.2f" %s stroke-linecap="round"/>`,
-					x1, y1, x2, y2, lineColor, strokeWidth, dashArray))
-			}
-			sb.WriteString("\n")
-			continue
-		}
-
-		if shapeW == 0 {
-			shapeW = 1
-		}
-		if shapeH == 0 {
-			shapeH = 1
-		}
-
-		// Render shape at its pixel size
-		pixelW := math.Abs(shapeW) * ppi
-		pixelH := math.Abs(shapeH) * ppi
-
-		result, err := vsdx.ShapeToSVG(shape,
-			vsdx.WithSize(pixelW, pixelH),
-			vsdx.WithPrecision(2))
-		if err != nil {
-			continue
-		}
-
-		// Extract inner SVG content and position it
-		inner := extractSVGContent(string(result.SVG))
-
-		// Position in page coordinates (converted to pixels)
-		// PinX/PinY is the shape's center, LocPinX/LocPinY is the local center offset
-		x := (shape.X() - shape.LocX()) * ppi
-		// For negative height shapes, LocY is also negative, so use shape.Y() - LocY for top edge
-		var y float64
-		if shapeH < 0 {
-			// Negative height: shape is flipped, top edge is at Y - LocY
-			y = viewH - (shape.Y()-shape.LocY())*ppi
-		} else {
-			y = viewH - (shape.Y()+(shape.Height()-shape.LocY()))*ppi
-		}
-
-		sb.WriteString(fmt.Sprintf(`<g transform="translate(%.2f %.2f)">`, x, y))
-		sb.WriteString(inner)
-		sb.WriteString("</g>\n")
-	}
-
-	sb.WriteString("</svg>\n")
-	return sb.String(), nil
-}
-
-func extractSVGContent(svg string) string {
-	// Remove XML declaration and SVG wrapper, keep inner content
-	svg = strings.TrimSpace(svg)
-
-	// Find opening <svg> tag end
-	start := strings.Index(svg, ">")
-	if start == -1 {
-		return svg
-	}
-
-	// Find closing </svg>
-	end := strings.LastIndex(svg, "</svg>")
-	if end == -1 {
-		return svg[start+1:]
-	}
-
-	return svg[start+1 : end]
 }
 
 func writeHTML(results []CompareResult, path string) error {
