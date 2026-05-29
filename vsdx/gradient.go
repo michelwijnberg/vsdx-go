@@ -24,7 +24,17 @@ type Gradient struct {
 
 // FillGradient returns the fill gradient settings for the shape.
 // Returns nil if gradient fill is not enabled.
+//
+// In addition to the explicit FillGradientEnabled path, Visio's FillPattern
+// numbers 25-40 are "fade" pseudo-patterns that actually render as linear
+// gradients between the shape's FillBkgnd and FillForegnd colours. We
+// synthesise a Gradient for those numbers so the renderer picks them up
+// through the same code path as a real gradient section.
 func (s *Shape) FillGradient() *Gradient {
+	if g := patternFillGradient(s); g != nil {
+		return g
+	}
+
 	enabled := s.CellValue("FillGradientEnabled")
 	if enabled != "1" {
 		return nil
@@ -181,4 +191,46 @@ func gradientToSVGDef(g *Gradient, id string, precision int) string {
 	}
 
 	return svg.String()
+}
+
+// patternFillGradient maps FillPattern numbers 25-40 — Visio's "fade"
+// pseudo-patterns — onto explicit Gradient objects using the shape's
+// FillForegnd / FillBkgnd colours. Returns nil for FillPattern outside
+// the gradient range or when FillPattern is 0/1/hatching (which the
+// hatch-pattern emitter handles).
+//
+// Confirmed against the comprehensive corpus where Visio's resave
+// turns FillPattern=25 into a horizontal fore→back gradient and
+// FillPattern=26 into a back→fore→back centre bar.
+func patternFillGradient(s *Shape) *Gradient {
+	pat := int(toFloat(s.CellValue("FillPattern")))
+	if pat < 25 || pat > 40 {
+		return nil
+	}
+	fore := resolveColor(s.CellValue("FillForegnd"))
+	if fore == "" {
+		fore = "#000000"
+	}
+	back := resolveColor(s.CellValue("FillBkgnd"))
+	if back == "" {
+		back = "#FFFFFF"
+	}
+
+	g := &Gradient{Enabled: true, Type: "linear"}
+	switch pat {
+	case 25: // Linear fade fore → back, horizontal L→R
+		g.Stops = []GradientStop{
+			{Position: 0, Color: fore},
+			{Position: 1, Color: back},
+		}
+	case 26: // Linear back → fore → back, horizontal centre bar
+		g.Stops = []GradientStop{
+			{Position: 0, Color: back},
+			{Position: 0.5, Color: fore},
+			{Position: 1, Color: back},
+		}
+	default:
+		return nil
+	}
+	return g
 }
