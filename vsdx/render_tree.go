@@ -533,15 +533,26 @@ func (b *RenderTreeBuilder) resolveText(shape *Shape, style *EffectiveStyle, tra
 		textColor = "#000000"
 	}
 
-	// Font family: only emit one when the shape explicitly carries a Char.Font
-	// name. Visio's SVG export always names Calibri (its default), but on
-	// Linux/headless rasterisers without Calibri installed the explicit name
-	// forces a worse fallback than leaving font-family unset. Real Windows
-	// users with Calibri see the correct font either way.
+	// Font family. Visio's SVG export always emits font-family="Calibri".
+	// Without that hint, the user's browser picks its default sans-serif
+	// (usually wider than Calibri), so every centred text label sits a
+	// few pixels off the Visio position. We emit Calibri with Carlito
+	// (the metric-compatible open-source replacement, packaged as
+	// fonts-crosextra-carlito on Debian) as a fallback for Linux hosts.
+	// Final fallback is sans-serif.
+	//
+	// On the Linux test pipeline rsvg-convert+fontconfig still resolves
+	// to DejaVu when Carlito is not installed — that's a one-line apt
+	// fix outside vsdx-go's scope, traded for user-visible Visio fidelity
+	// in the browser.
+	fontFamily := style.FontName
+	if fontFamily == "" {
+		fontFamily = "Calibri, Carlito, sans-serif"
+	}
 	text := &ResolvedText{
 		Content:    shape.Text(),
 		FontSize:   fontSizeSVG,
-		FontFamily: style.FontName,
+		FontFamily: fontFamily,
 		FontWeight: "normal",
 		FontStyle:  "normal",
 		Fill:       textColor,
