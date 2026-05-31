@@ -1,0 +1,21 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+This project adheres to [Semantic Versioning](https://semver.org/).
+
+## [1.0.1]
+
+- Add runnable examples (`examples/`) and package-level example documentation.
+- Add GitHub Actions CI (build, vet, test).
+- Add README badges and this changelog.
+
+## [1.0.0]
+
+Initial public release.
+
+- Read, edit, and write Microsoft Visio `.vsdx` files.
+- High-fidelity SVG rendering: geometry, connectors, arrows, line styles,
+  fills and gradients, drop shadows, text, transforms, and nested groups.
+- Master shapes, stencils (`.vssx`), themes, variants, and stylesheets.
+- Formula evaluation, A\* connector auto-routing, templating, schema
+  validation, and file diffing.
