@@ -2435,10 +2435,10 @@ func hslToRGB(h, s, l float64) (r, g, b float64) {
 
 func hueToRGB(p, q, t float64) float64 {
 	if t < 0 {
-		t += 1
+		t++
 	}
 	if t > 1 {
-		t -= 1
+		t--
 	}
 	if t < 1.0/6.0 {
 		return p + (q-p)*6*t

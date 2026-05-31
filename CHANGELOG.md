@@ -3,6 +3,11 @@
 All notable changes to this project are documented in this file.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.3]
+
+- Stop tracking generated test output (`tests/out/`); it is now git-ignored.
+- Minor lint cleanup (`t++` / `t--` increment style).
+
 ## [1.0.2]
 
 - Apply `gofmt -s` to the entire codebase (formatting only; no behavior change).

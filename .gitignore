@@ -10,3 +10,4 @@ CLAUDE.md
 # Editor / OS
 .DS_Store
 *.swp
+tests/out/

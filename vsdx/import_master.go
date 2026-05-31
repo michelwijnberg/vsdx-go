@@ -9,8 +9,6 @@
 // stencil pane onto a drawing: the master is *promoted* into the drawing
 // bundle on first use so subsequent instances reference it locally and the
 // file remains self-contained.
-//
-// See FEATURE_REQUEST_cross_bundle_master_copy.md for the design rationale.
 
 package vsdx
 
