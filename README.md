@@ -178,6 +178,10 @@ vsdx-go was originally derived from the BSD-licensed
 [vsdx](https://github.com/dave-howard/vsdx) Python library by Dave Howard, and
 has since been substantially rewritten and extended for Go.
 
+## Author
+
+[Michel Wijnberg](https://wijnberg.net)
+
 ## Trademarks
 
 Microsoft and Visio are trademarks of Microsoft Corporation. vsdx-go is an
