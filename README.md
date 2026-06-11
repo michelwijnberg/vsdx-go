@@ -2,8 +2,6 @@
 
 A Go library for reading, editing, and writing Microsoft Visio (.vsdx) files.
 
-This is a Go port of the Python [vsdx](https://github.com/dave-howard/vsdx) library (v0.6.1).
-
 ## Installation
 
 ```bash
@@ -409,7 +407,7 @@ visio/masters/master1.xml     Individual master shapes
 
 XML namespace: `http://schemas.microsoft.com/office/visio/2012/main`
 
-XML parsing uses [github.com/beevik/etree](https://github.com/beevik/etree) for XPath-like navigation, matching the Python library's ElementTree approach.
+XML parsing uses [github.com/beevik/etree](https://github.com/beevik/etree) for XPath-like navigation.
 
 ## Running Tests
 
@@ -464,10 +462,10 @@ default-value stripping for cells that Visio's resave would strip.
 22 out of 24 ZIP-files match Visio's resave tag-count exactly; see
 `vsdx/WRITER_AUDIT.md` for the full list of canonical-form items.
 
-## Credits
-
-Go port of the Python [vsdx](https://github.com/dave-howard/vsdx) library by Dave Howard.
-
 ## License
 
 BSD License - see [LICENSE](LICENSE) for details.
+
+## Author
+
+Michel Wijnberg
